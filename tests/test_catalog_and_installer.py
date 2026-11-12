@@ -290,10 +290,19 @@ def test_desktop_hub_composes_auraseed_mvenv_panel(tmp_path: Path) -> None:
         pytest.skip(f"No Tk display available: {exc}")
         return
 
+    hub = None
     try:
         hub = SproutDesktopHub(root=root, paths=paths, mvenv_manager=mvenv_mgr)
         assert hub.mvenv_panel is not None
         assert hub.mvenv_panel.repoint_callback == hub.installer.relink_app_mvenv
     finally:
-        root.destroy()
+        import gc
+
+        if hub is not None:
+            hub.close()
+        else:
+            root.destroy()
+        del hub
+        del root
+        gc.collect()
 

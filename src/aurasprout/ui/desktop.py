@@ -56,6 +56,20 @@ class SproutDesktopHub:
         self._build_ui()
         self.refresh_apps()
 
+    def close(self) -> None:
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            finally:
+                self._web_server = None
+        if self.root is not None:
+            try:
+                self.root.destroy()
+            except Exception as exc:
+                _LOG.debug("Tk root destroy skipped: %s", exc)
+            finally:
+                self.root = None
+
     def _build_ui(self) -> None:
         header = ttk.Frame(self.root, padding=(12, 10))
         header.pack(fill=tk.X)
