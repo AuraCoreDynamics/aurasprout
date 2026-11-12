@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hmac
 import http.cookies
 import json
@@ -10,15 +11,18 @@ import os
 import secrets
 import threading
 import urllib.parse
+from email.parser import BytesParser
+from email.policy import default as email_policy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from auraseed.mvenv.manager import MvenvManager
 
+from aurasprout.catalog.html_generator import generate_catalog_html
 from aurasprout.catalog.manager import SproutCatalogManager
 from aurasprout.catalog.sources import CatalogSourcesRegistry
-from aurasprout.contracts.paths import SproutPaths
+from aurasprout.contracts.paths import SproutPaths, validate_identifier, validate_within_root
 from aurasprout.coordination.leases import VolunteerLeaseManager
 from aurasprout.installer.engine import SproutInstallerEngine
 from aurasprout.installer.registry import InstalledAppsRegistry
@@ -104,6 +108,17 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
         payload: Any,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> None:
+        if status >= 400 and not getattr(self, "_body_consumed", False):
+            try:
+                content_len = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                content_len = 0
+            if 0 < content_len <= 1024 * 1024:
+                try:
+                    self.rfile.read(content_len)
+                    self._body_consumed = True
+                except OSError:
+                    pass
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -134,6 +149,7 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
 
     def _read_json(self) -> Dict[str, Any]:
         length = int(self.headers.get("Content-Length") or "0")
+        self._body_consumed = True
         if length <= 0:
             return {}
         raw = self.rfile.read(length)
@@ -141,6 +157,109 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(parsed, dict):
             raise ValueError("Expected JSON object")
         return parsed
+
+    def _read_raw_body(self, max_bytes: int = 256 * 1024 * 1024) -> bytes:
+        length = int(self.headers.get("Content-Length") or "0")
+        if length <= 0:
+            self._body_consumed = True
+            return b""
+        if length > max_bytes:
+            raise ValueError(f"Payload exceeds maximum allowed upload size ({max_bytes} bytes)")
+        self._body_consumed = True
+        return self.rfile.read(length)
+
+    def _catalog_http_base_url(self) -> str:
+        host_hdr = (self.headers.get("Host") or "").strip()
+        if host_hdr:
+            return f"http://{host_hdr}/catalog"
+        addr, port = self.server.server_address  # type: ignore[attr-defined]
+        return f"http://{addr}:{port}/catalog"
+
+    def _send_bytes(
+        self,
+        status: int,
+        data: bytes,
+        content_type: str,
+        filename: Optional[str] = None,
+    ) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        if filename:
+            safe_disp = filename.replace('"', "")
+            self.send_header("Content-Disposition", f'attachment; filename="{safe_disp}"')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve_hosted_catalog(self, path: str) -> bool:
+        """Serve read-only static HTML portal, catalog.json, and `.apkg` bundles under `/catalog`."""
+        st = self.ui_state
+        catalog_base = self._catalog_http_base_url()
+
+        if path in ("/catalog", "/catalog/", "/catalog/index.html"):
+            html_doc = generate_catalog_html(st.catalog_manager.manifest, catalog_url=catalog_base)
+            data = html_doc.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+            )
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return True
+
+        if path == "/catalog/catalog.json":
+            manifest_dict = st.catalog_manager.manifest.to_dict()
+            manifest_dict["baseUrl"] = catalog_base
+            apps_block = manifest_dict.get("apps")
+            if isinstance(apps_block, dict):
+                for app_id, app_entry in apps_block.items():
+                    if not isinstance(app_entry, dict):
+                        continue
+                    versions = app_entry.get("versions")
+                    if isinstance(versions, dict):
+                        for v_entry in versions.values():
+                            if isinstance(v_entry, dict) and v_entry.get("bundleFilename"):
+                                b_url = str(v_entry.get("bundleUrl") or "")
+                                if not b_url.startswith(("http://", "https://")):
+                                    v_entry["bundleUrl"] = f"{catalog_base}/apps/{app_id}/{v_entry['bundleFilename']}"
+            self._send_json(200, manifest_dict)
+            return True
+
+        for prefix, root_dir in (
+            ("/catalog/apps/", st.catalog_manager.apps_dir),
+            ("/catalog/channels/", st.catalog_manager.channels_dir),
+        ):
+            if path.startswith(prefix):
+                rel = path[len(prefix):].lstrip("/")
+                try:
+                    target = validate_within_root(root_dir, rel)
+                except ValueError:
+                    self._send_json(400, {"error": "BadRequest", "detail": "Invalid catalog asset path"})
+                    return True
+                if not target.exists() or not target.is_file():
+                    self._send_json(404, {"error": "NotFound", "detail": f"Catalog artifact not found: {rel}"})
+                    return True
+                ctype = (
+                    "application/json; charset=utf-8"
+                    if target.suffix.lower() == ".json"
+                    else "application/octet-stream"
+                )
+                self._send_bytes(
+                    200,
+                    target.read_bytes(),
+                    content_type=ctype,
+                    filename=(target.name if target.suffix.lower() == ".apkg" else None),
+                )
+                return True
+
+        return False
 
     def _check_origin_and_host(self) -> bool:
         host_hdr = self.headers.get("Host") or ""
@@ -193,6 +312,7 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
         self._send_json(405, {"error": "MethodNotAllowed"})
 
     def _dispatch(self, method: str) -> None:
+        self._body_consumed = False
         if not self._check_origin_and_host():
             return
 
@@ -208,13 +328,17 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
             self._send_static(_STATIC_DIR / "app.js", "application/javascript; charset=utf-8")
             return
 
-        # Public health & session exchange
+        # Public health & hosted static HTTP catalog
         if method == "GET" and path in ("/api/health", "/api/v1/health"):
             self._send_json(
                 200,
                 {"status": "Healthy", "version": "4.3.0", "nodeId": self.ui_state.node_id},
             )
             return
+
+        if method == "GET" and (path == "/catalog" or path.startswith("/catalog/")):
+            if self._serve_hosted_catalog(path):
+                return
 
         if method == "POST" and path == "/api/v1/auth/session":
             try:
@@ -390,10 +514,58 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
                 return
 
         if method == "POST" and path == "/api/v1/catalog/publish":
-            body = self._read_json()
-            pkg_path = Path(str(body["packagePath"])).resolve()
-            ch = str(body.get("channel") or "stable")
-            ver_entry = st.catalog_manager.publish_package(pkg_path, channel=ch)
+            ctype = (self.headers.get("Content-Type") or "application/json").split(";", 1)[0].strip().lower()
+            ch = str(query.get("channel", ["stable"])[0] or "stable")
+            fname = query.get("filename", [None])[0] or self.headers.get("X-Filename")
+
+            if ctype in ("application/octet-stream", "application/zip", "application/x-gzip"):
+                raw_bytes = self._read_raw_body()
+                ver_entry = st.catalog_manager.publish_package(
+                    raw_bytes,
+                    channel=ch,
+                    filename=fname or "package.apkg",
+                )
+            elif ctype == "multipart/form-data":
+                full_ctype = self.headers.get("Content-Type") or ""
+                raw_bytes = self._read_raw_body()
+                msg = BytesParser(policy=email_policy).parsebytes(
+                    b"Content-Type: " + full_ctype.encode("latin-1") + b"\r\nMIME-Version: 1.0\r\n\r\n" + raw_bytes
+                )
+                pkg_bytes: Optional[bytes] = None
+                for part in msg.iter_parts():
+                    disp_name = part.get_param("name", header="content-disposition")
+                    part_fname = part.get_filename()
+                    if disp_name == "channel":
+                        ch = part.get_content().strip() or ch
+                    elif part_fname or disp_name in ("package", "file"):
+                        payload = part.get_payload(decode=True)
+                        if isinstance(payload, bytes):
+                            pkg_bytes = payload
+                            if part_fname and not fname:
+                                fname = part_fname
+                if not pkg_bytes:
+                    raise ValueError("Multipart upload missing 'package' or 'file' payload")
+                ver_entry = st.catalog_manager.publish_package(
+                    pkg_bytes,
+                    channel=ch,
+                    filename=fname or "package.apkg",
+                )
+            else:
+                body = self._read_json()
+                ch = str(body.get("channel") or ch or "stable")
+                if body.get("packageBase64"):
+                    decoded = base64.b64decode(str(body["packageBase64"]), validate=True)
+                    ver_entry = st.catalog_manager.publish_package(
+                        decoded,
+                        channel=ch,
+                        filename=str(body.get("filename") or fname or "package.apkg"),
+                    )
+                elif body.get("packagePath"):
+                    pkg_path = Path(str(body["packagePath"])).resolve()
+                    ver_entry = st.catalog_manager.publish_package(pkg_path, channel=ch)
+                else:
+                    raise ValueError("Provide 'packagePath', 'packageBase64', or binary upload body")
+
             # Find published catalog entry
             published_app = None
             for app in st.catalog_manager.manifest.apps.values():
@@ -414,6 +586,21 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
                     "bundleSha256": ver_entry.bundle_sha256,
                     "tags": list(published_app.tags),
                 },
+            )
+            return
+
+        if method == "GET" and path.startswith("/api/v1/catalog/apps/") and path.endswith("/download"):
+            app_id = validate_identifier(path[len("/api/v1/catalog/apps/") : -len("/download")], "appId")
+            ver = query.get("version", [None])[0]
+            ch = query.get("channel", [None])[0]
+            bundle_path = st.catalog_manager.get_bundle_path(app_id, version=ver, channel=ch)
+            if bundle_path is None:
+                raise KeyError(f"Bundle for application {app_id!r} not found")
+            self._send_bytes(
+                200,
+                bundle_path.read_bytes(),
+                content_type="application/octet-stream",
+                filename=bundle_path.name,
             )
             return
 

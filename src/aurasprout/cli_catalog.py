@@ -62,12 +62,23 @@ def register_catalog_and_install_commands(subparsers: argparse._SubParsersAction
     p_clist.add_argument("--channel", default=None, help="Channel filter")
     p_clist.add_argument("--json", action="store_true", help="Emit JSON output")
 
-    p_cpub = cat_sub.add_parser("publish", help="Publish an .apkg or app source directory into the catalog")
+    p_cpub = cat_sub.add_parser("publish", help="Publish an .apkg or app source directory into the catalog or push to HTTP server")
     p_cpub.add_argument("source", help="Path to .apkg file or application directory")
     p_cpub.add_argument("--catalog-dir", default=None, help="Target catalog root directory")
+    p_cpub.add_argument("--server", default=None, help="Optional remote AuraSprout HTTP UI server URL to push to")
+    p_cpub.add_argument("--token", default=None, help="Bootstrap token for AuraSprout HTTP UI server")
+    p_cpub.add_argument("--token-file", default=None, help="File containing AuraSprout HTTP UI bootstrap token")
     p_cpub.add_argument("--channel", default="stable", help="Release channel")
     p_cpub.add_argument("--base-url", default=None, help="Optional baseUrl")
     p_cpub.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    p_cpush = cat_sub.add_parser("push", help="Push an .apkg or app source directory to a running AuraSprout HTTP server")
+    p_cpush.add_argument("source", help="Path to .apkg file or application directory")
+    p_cpush.add_argument("--server", required=True, help="AuraSprout HTTP server URL (e.g. http://<host>:<port>)")
+    p_cpush.add_argument("--token", default=None, help="Bootstrap token (or include #<token> in --server)")
+    p_cpush.add_argument("--token-file", default=None, help="Path to file containing bootstrap token")
+    p_cpush.add_argument("--channel", default="stable", help="Release channel")
+    p_cpush.add_argument("--json", action="store_true", help="Emit JSON output")
 
     p_cbuild = cat_sub.add_parser("build", help="Rebuild static zero-CDN index.html portal for a catalog")
     p_cbuild.add_argument("catalog_dir", help="Catalog root directory")
@@ -78,6 +89,18 @@ def register_catalog_and_install_commands(subparsers: argparse._SubParsersAction
     p_csrc_add.add_argument("url", help="Catalog URL or shared path")
     p_csrc_add.add_argument("--label", default=None, help="Friendly label")
     p_csrc_add.add_argument("--default", action="store_true", help="Mark as default source")
+
+    p_csrc_list = cat_sub.add_parser("sources", help="List attached catalog sources")
+    p_csrc_list.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    p_csrc_rm = cat_sub.add_parser("remove-source", help="Detach a catalog source by URL or path")
+    p_csrc_rm.add_argument("url", help="Catalog URL or shared path")
+    p_csrc_rm.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    p_cdel = cat_sub.add_parser("delete", help="Delete an application from the local catalog")
+    p_cdel.add_argument("app_id", help="Application ID to remove")
+    p_cdel.add_argument("--catalog-dir", default=None, help="Target catalog root directory")
+    p_cdel.add_argument("--json", action="store_true", help="Emit JSON output")
 
 
 def handle_catalog_and_install_command(args: argparse.Namespace, paths: SproutPaths) -> Optional[int]:
@@ -197,6 +220,20 @@ def handle_catalog_and_install_command(args: argparse.Namespace, paths: SproutPa
             return 0
 
         if args.catalog_cmd == "publish":
+            if getattr(args, "server", None):
+                cat = SproutCatalogManager(paths=paths)
+                resp = cat.push_package_http(
+                    server_url=args.server,
+                    package_source=Path(args.source),
+                    bootstrap_token=args.token,
+                    channel=args.channel,
+                    token_file=Path(args.token_file) if getattr(args, "token_file", None) else None,
+                )
+                if args.json:
+                    print(json.dumps(resp, indent=2))
+                else:
+                    print(f"Pushed {resp.get('appId')}@{resp.get('latestVersion')} -> {args.server}")
+                return 0
             cat_dir = Path(args.catalog_dir) if args.catalog_dir else None
             cat = SproutCatalogManager(catalog_dir=cat_dir, base_url=args.base_url, paths=paths)
             ver = cat.publish_package(Path(args.source), channel=args.channel)
@@ -204,6 +241,23 @@ def handle_catalog_and_install_command(args: argparse.Namespace, paths: SproutPa
                 print(json.dumps(ver.to_dict(), indent=2))
             else:
                 print(f"Published version {ver.version} ({ver.bundle_sha256})")
+            return 0
+
+        if args.catalog_cmd == "push":
+            cat = SproutCatalogManager(paths=paths)
+            resp = cat.push_package_http(
+                server_url=args.server,
+                package_source=Path(args.source),
+                bootstrap_token=args.token,
+                channel=args.channel,
+                token_file=Path(args.token_file) if args.token_file else None,
+            )
+            if args.json:
+                print(json.dumps(resp, indent=2))
+            else:
+                print(
+                    f"Pushed {resp.get('appId')}@{resp.get('latestVersion')} ({resp.get('bundleSha256')}) -> {resp.get('catalogUrl', args.server)}"
+                )
             return 0
 
         if args.catalog_cmd == "build":
@@ -217,5 +271,35 @@ def handle_catalog_and_install_command(args: argparse.Namespace, paths: SproutPa
             saved = reg.attach_source(args.url, label=args.label, set_default=args.default)
             print(json.dumps(saved, indent=2))
             return 0
+
+        if args.catalog_cmd == "sources":
+            reg = CatalogSourcesRegistry(paths=paths)
+            sources = reg.list_sources()
+            if getattr(args, "json", False):
+                print(json.dumps({"sources": sources}, indent=2))
+            else:
+                for src in sources:
+                    marker = " (default)" if src.get("isDefault") else ""
+                    print(f"{src.get('url')}{marker}")
+            return 0
+
+        if args.catalog_cmd == "remove-source":
+            reg = CatalogSourcesRegistry(paths=paths)
+            removed = reg.remove_source(args.url)
+            if getattr(args, "json", False):
+                print(json.dumps({"url": args.url, "removed": removed}, indent=2))
+            else:
+                print(f"Removed {args.url}: {removed}")
+            return 0 if removed else 1
+
+        if args.catalog_cmd == "delete":
+            cat_dir = Path(args.catalog_dir) if args.catalog_dir else None
+            cat = SproutCatalogManager(catalog_dir=cat_dir, paths=paths)
+            deleted = cat.delete_app(args.app_id)
+            if getattr(args, "json", False):
+                print(json.dumps({"appId": args.app_id, "deleted": deleted}, indent=2))
+            else:
+                print(f"Deleted {args.app_id} from catalog: {deleted}")
+            return 0 if deleted else 1
 
     return None

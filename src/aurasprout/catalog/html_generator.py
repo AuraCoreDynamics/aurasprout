@@ -187,7 +187,7 @@ def generate_catalog_html(manifest: CatalogManifest, catalog_url: Optional[str] 
     function openInstallModal(appId, version) {{
       document.getElementById("modal-app-title").textContent = "Install " + appId + " v" + version;
       document.getElementById("modal-code").textContent =
-        'aurasprout catalog install ' + appId + ' --version ' + version + ' --from-catalog "' + CATALOG_URL + '"';
+        'aurasprout install ' + appId + ' --version ' + version + ' --from-catalog "' + CATALOG_URL + '"';
       document.getElementById("install-modal").style.display = "flex";
     }}
     function closeModal() {{ document.getElementById("install-modal").style.display = "none"; }}

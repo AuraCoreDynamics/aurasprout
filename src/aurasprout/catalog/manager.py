@@ -349,3 +349,77 @@ class SproutCatalogManager:
             verify_sha256(out_file, v_entry.bundle_sha256)
         return out_file, v_entry
 
+    def push_package_http(
+        self,
+        server_url: str,
+        package_source: Path,
+        bootstrap_token: Optional[str] = None,
+        channel: str = "stable",
+        token_file: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """Push an `.apkg` archive (or package an app directory first) over HTTP to AuraSprout UI."""
+        if channel not in RELEASE_CHANNELS:
+            raise ValueError(f"Unsupported channel {channel!r}; expected one of {RELEASE_CHANNELS}")
+
+        parsed = urllib.parse.urlsplit((server_url or "").strip())
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError(f"Invalid AuraSprout server URL: {server_url!r}")
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+        resolved_token = (bootstrap_token or "").strip()
+        if not resolved_token and parsed.fragment:
+            resolved_token = parsed.fragment.strip()
+        if not resolved_token and token_file is not None:
+            raw_token_text = Path(token_file).read_text(encoding="utf-8").strip()
+            if raw_token_text.startswith("{"):
+                try:
+                    token_payload = json.loads(raw_token_text)
+                    if isinstance(token_payload, dict) and token_payload.get("token"):
+                        raw_token_text = str(token_payload["token"]).strip()
+                except json.JSONDecodeError:
+                    pass
+            resolved_token = raw_token_text
+        if not resolved_token:
+            resolved_token = (os.environ.get("AURASPROUT_UI_TOKEN") or "").strip()
+        if not resolved_token:
+            raise ValueError(
+                "Bootstrap token required to push to AuraSprout HTTP API "
+                "(pass --token, include #<token> in URL, or set AURASPROUT_UI_TOKEN)"
+            )
+
+        src = Path(package_source).resolve()
+        if not src.exists():
+            raise FileNotFoundError(f"Package or application directory not found: {src}")
+
+        temp_dir: Optional[Path] = None
+        if src.is_dir():
+            temp_dir = Path(tempfile.mkdtemp(prefix="aurasprout_push_"))
+            apkg_path, _, _ = SproutPackager(src).package(temp_dir)
+        else:
+            apkg_path = src
+
+        try:
+            payload_bytes = apkg_path.read_bytes()
+            qs = urllib.parse.urlencode({"channel": channel, "filename": apkg_path.name})
+            with httpx.Client(base_url=base_url, timeout=max(self.timeout, 60.0)) as client:
+                auth_resp = client.post("/api/v1/auth/session", json={"token": resolved_token})
+                auth_resp.raise_for_status()
+                csrf_token = str(auth_resp.json().get("csrfToken") or "")
+                pub_resp = client.post(
+                    f"/api/v1/catalog/publish?{qs}",
+                    content=payload_bytes,
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "X-CSRF-Token": csrf_token,
+                        "X-Filename": apkg_path.name,
+                    },
+                )
+                pub_resp.raise_for_status()
+                data = pub_resp.json()
+                if isinstance(data, dict):
+                    data.setdefault("catalogUrl", f"{base_url}/catalog")
+                return data
+        finally:
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+

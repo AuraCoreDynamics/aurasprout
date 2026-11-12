@@ -11,11 +11,45 @@ import os
 import platform
 import shlex
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from aurasprout.contracts.paths import validate_identifier
 
 _LOG = logging.getLogger(__name__)
+
+
+def _resolve_launcher_parts(python_exe: Path, cmd_rendered: str) -> tuple[str, str]:
+    """Return `(executable_or_python, arguments)` handling `-m ...`, `python ...`, and console scripts."""
+    stripped = (cmd_rendered or "").strip()
+    if not stripped:
+        return str(python_exe), ""
+    if stripped.startswith("-m "):
+        return str(python_exe), stripped
+
+    try:
+        tokens = shlex.split(stripped, posix=(platform.system().lower() != "windows"))
+    except ValueError:
+        tokens = stripped.split()
+    if not tokens:
+        return str(python_exe), ""
+
+    first = tokens[0]
+    rest = " ".join(tokens[1:]) if platform.system().lower() == "windows" else " ".join(shlex.quote(t) for t in tokens[1:])
+    if Path(first).name.lower() in ("python", "python3", "python.exe"):
+        return str(python_exe), rest
+
+    scripts_dir = Path(python_exe).resolve().parent
+    is_win = platform.system().lower() == "windows"
+    script_candidates = (
+        [scripts_dir / f"{first}.exe", scripts_dir / f"{first}.cmd", scripts_dir / f"{first}.bat", scripts_dir / first]
+        if is_win
+        else [scripts_dir / first]
+    )
+    for cand in script_candidates:
+        if cand.exists() and cand.is_file():
+            return str(cand), rest
+
+    return str(python_exe), f"-m {stripped}"
 
 
 def generate_launchers(
@@ -30,10 +64,13 @@ def generate_launchers(
     safe_id = validate_identifier(app_id, "appId")
     target_dir = Path(install_dir).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
-    py_str = str(Path(python_exe).resolve())
+    py_path = Path(python_exe).resolve()
+    py_str = str(py_path)
     venv_root_str = str(Path(mvenv_root).resolve()) if mvenv_root else str(target_dir)
 
     cmd_rendered = (entrypoint_command or f"{safe_id}").replace("{port}", str(port))
+    exec_bin, exec_args = _resolve_launcher_parts(py_path, cmd_rendered)
+    args_suffix = f" {exec_args}" if exec_args else ""
     launchers: Dict[str, str] = {}
 
     if platform.system().lower() == "windows":
@@ -43,7 +80,7 @@ def generate_launchers(
             "setlocal\r\n"
             f'set "VIRTUAL_ENV={venv_root_str}"\r\n'
             f'set "PATH={Path(py_str).parent};%PATH%"\r\n'
-            f'"{py_str}" -m {cmd_rendered} %*\r\n'
+            f'"{exec_bin}"{args_suffix} %*\r\n'
         )
         bat_path.write_text(bat_content, encoding="utf-8")
         launchers["bat"] = str(bat_path)
@@ -52,18 +89,19 @@ def generate_launchers(
         ps1_content = (
             f'$env:VIRTUAL_ENV = "{venv_root_str}"\n'
             f'$env:PATH = "{Path(py_str).parent};$env:PATH"\n'
-            f'& "{py_str}" -m {cmd_rendered} @args\n'
+            f'& "{exec_bin}"{args_suffix} @args\n'
         )
         ps1_path.write_text(ps1_content, encoding="utf-8")
         launchers["ps1"] = str(ps1_path)
     else:
         sh_path = target_dir / f"run-{safe_id}.sh"
-        sh_tokens = " ".join(shlex.quote(tok) for tok in cmd_rendered.split())
+        sh_tokens = " ".join(shlex.quote(tok) for tok in cmd_rendered.split()) if exec_args == f"-m {cmd_rendered.strip()}" else exec_args
+        sh_suffix = f" {sh_tokens}" if sh_tokens else ""
         sh_content = (
             "#!/bin/sh\n"
             f'export VIRTUAL_ENV={shlex.quote(venv_root_str)}\n'
             f'export PATH={shlex.quote(str(Path(py_str).parent))}:"$PATH"\n'
-            f'exec {shlex.quote(py_str)} -m {sh_tokens} "$@"\n'
+            f'exec {shlex.quote(exec_bin)}{sh_suffix} "$@"\n'
         )
         sh_path.write_text(sh_content, encoding="utf-8")
         try:
@@ -75,15 +113,48 @@ def generate_launchers(
     return launchers
 
 
+def resolve_user_desktop_dir(desktop_dir: Optional[Path] = None) -> Path:
+    """Resolve user's Desktop directory, respecting Windows folder redirection (e.g. OneDrive)."""
+    if desktop_dir is not None:
+        return Path(desktop_dir).resolve()
+
+    home = Path.home()
+    if platform.system().lower() == "windows":
+        import winreg
+
+        for subkey in (
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders",
+        ):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_READ) as rk:
+                    raw_val, _ = winreg.QueryValueEx(rk, "Desktop")
+                    expanded = os.path.expandvars(str(raw_val or "").strip())
+                    if expanded:
+                        cand = Path(expanded)
+                        if cand.exists():
+                            return cand.resolve()
+            except OSError:
+                continue
+
+        onedrive_desktop = home / "OneDrive" / "Desktop"
+        if (home / "Desktop").exists():
+            return (home / "Desktop").resolve()
+        if onedrive_desktop.exists():
+            return onedrive_desktop.resolve()
+
+    return (home / "Desktop").resolve()
+
+
 def create_user_desktop_shortcut(
     app_id: str,
     display_name: str,
     launcher_path: Path,
-    desktop_dir: Path | None = None,
-) -> Path | None:
+    desktop_dir: Optional[Path] = None,
+) -> Optional[Path]:
     """Create a user-space desktop shortcut without COM/`_winapi`/`ctypes`."""
     safe_id = validate_identifier(app_id, "appId")
-    desktop = Path(desktop_dir).resolve() if desktop_dir else (Path.home() / "Desktop")
+    desktop = resolve_user_desktop_dir(desktop_dir)
     if not desktop.exists():
         return None
 

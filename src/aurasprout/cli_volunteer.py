@@ -21,7 +21,7 @@ def register_volunteer_commands(subparsers: argparse._SubParsersAction) -> None:
 
     p_venable = vol_sub.add_parser("enable", help="Opt in to collaborative execution for masId")
     p_venable.add_argument("mas_id", help="MAS service ID")
-    p_venable.add_argument("--mode", default="CellSingleton", choices=["CellSingleton", "Distributed"])
+    p_venable.add_argument("--mode", default=None, choices=["CellSingleton", "Distributed"])
     p_venable.add_argument("--json", action="store_true", help="Emit JSON output")
 
     p_vdisable = vol_sub.add_parser("disable", help="Disable volunteering and release held lease for masId")
@@ -76,11 +76,14 @@ def handle_volunteer_command(args: argparse.Namespace, paths: SproutPaths) -> Op
 
         if args.vol_cmd in ("enable", "disable"):
             enabled = args.vol_cmd == "enable"
-            mode = getattr(args, "mode", "CellSingleton")
+            requested_mode = getattr(args, "mode", None)
+            mode = requested_mode or "CellSingleton"
             for app in registry.list_all():
                 changed = False
                 for svc in app.services:
                     if svc.mas_id == args.mas_id:
+                        if requested_mode and svc.mode != "LocalOnly":
+                            svc.mode = requested_mode
                         mode = svc.mode
                         svc.volunteer_enabled = enabled if svc.mode != "LocalOnly" else False
                         changed = True

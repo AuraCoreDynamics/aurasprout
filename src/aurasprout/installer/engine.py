@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,6 +30,7 @@ from aurasprout.installer.autostart import (
     configure_user_autostart,
     create_user_desktop_shortcut,
     generate_launchers,
+    resolve_user_desktop_dir,
 )
 from aurasprout.installer.registry import (
     InstalledAppRecord,
@@ -61,6 +64,60 @@ class SproutInstallerEngine:
         )
 
     @staticmethod
+    def _build_backend_modules(project_dir: Path) -> List[str]:
+        pyproject = project_dir / "pyproject.toml"
+        reqs: List[str] = []
+        if pyproject.exists():
+            raw_text = pyproject.read_text(encoding="utf-8", errors="ignore")
+            try:
+                import tomllib  # Python 3.11+
+
+                data = tomllib.loads(raw_text)
+                raw_reqs = data.get("build-system", {}).get("requires") or []
+                reqs = [str(r) for r in raw_reqs]
+            except Exception:
+                import re
+
+                m = re.search(r"requires\s*=\s*\[([^\]]*)\]", raw_text, re.DOTALL)
+                if m:
+                    reqs = re.findall(r"""["']([^"']+)["']""", m.group(1))
+        if not reqs:
+            reqs = ["setuptools"]
+
+        import re
+
+        modules: List[str] = []
+        for req in reqs:
+            dist = re.split(r"[<>=!~;\[\s]", req.strip(), maxsplit=1)[0].strip().lower()
+            if not dist:
+                continue
+            mod = {
+                "flit-core": "flit_core",
+                "poetry-core": "poetry",
+                "pdm-backend": "pdm",
+            }.get(dist, dist.replace("-", "_"))
+            if mod not in modules:
+                modules.append(mod)
+        return modules or ["setuptools"]
+
+    @classmethod
+    def _can_skip_build_isolation(cls, python_exe: Path, project_dir: Path) -> bool:
+        mods = cls._build_backend_modules(project_dir)
+        probe = (
+            "import importlib.util, sys; "
+            f"mods = {mods!r}; "
+            "sys.exit(0 if all(importlib.util.find_spec(m) is not None for m in mods) else 1)"
+        )
+        res = subprocess.run(
+            [str(Path(python_exe).resolve()), "-c", probe],
+            capture_output=True,
+            text=True,
+            shell=False,
+            timeout=20,
+        )
+        return res.returncode == 0
+
+    @staticmethod
     def _run_pip(
         python_exe: Path,
         args: List[str],
@@ -90,18 +147,21 @@ class SproutInstallerEngine:
         app_root: Path,
         manifest: AppManifest,
         port: int,
+        artifacts_dir: Optional[Path] = None,
     ) -> None:
         if not hook_script.exists():
             raise FileNotFoundError(f"Lifecycle hook '{hook_name}' not found: {hook_script}")
         env = os.environ.copy()
-        artifacts_dir = app_root / "artifacts"
-        if not artifacts_dir.exists() and (app_root.parent / "artifacts").exists():
-            artifacts_dir = app_root.parent / "artifacts"
+        resolved_artifacts = artifacts_dir
+        if resolved_artifacts is None or not resolved_artifacts.exists():
+            resolved_artifacts = app_root / "artifacts"
+            if not resolved_artifacts.exists() and (app_root.parent / "artifacts").exists():
+                resolved_artifacts = app_root.parent / "artifacts"
 
         hook_env = {
             "AURASPROUT_INSTALL_DIR": str(install_dir),
             "AURASPROUT_APP_ROOT": str(app_root),
-            "AURASPROUT_ARTIFACTS_DIR": str(artifacts_dir),
+            "AURASPROUT_ARTIFACTS_DIR": str(resolved_artifacts),
             "AURASPROUT_PYTHON": str(python_exe),
             "AURASPROUT_PORT": str(port),
             "AURASPROUT_APP_ID": manifest.app_id,
@@ -112,7 +172,7 @@ class SproutInstallerEngine:
             "AURASEED_INSTALL_DIR": str(install_dir),
             "AURASEED_APP_ROOT": str(app_root),
             "AURASEED_BUNDLE_DIR": str(app_root),
-            "AURASEED_ARTIFACTS_DIR": str(artifacts_dir),
+            "AURASEED_ARTIFACTS_DIR": str(resolved_artifacts),
             "AURASEED_PYTHON": str(python_exe),
             "AURASEED_PORT": str(port),
             "AURASEED_APP_NAME": manifest.app_id,
@@ -210,13 +270,15 @@ class SproutInstallerEngine:
         if self._has_python_project(src_root):
             pip_args = list(manifest.distribution.pip_install_args)
             if not pip_args:
-                pip_args = ["install", "--no-build-isolation"]
+                pip_args = ["install"]
                 if resolved_wh is not None and resolved_wh.exists():
-                    pip_args.extend(["--no-index", "--find-links", str(resolved_wh)])
+                    pip_args.extend(["--no-build-isolation", "--no-index", "--find-links", str(resolved_wh)])
+                elif self._can_skip_build_isolation(python_exe, src_root):
+                    pip_args.append("--no-build-isolation")
                 if editable:
                     pip_args.extend(["-e", str(src_root)])
                 else:
-                    pip_args.extend(["--no-deps", str(src_root)] if resolved_wh is None else [str(src_root)])
+                    pip_args.append(str(src_root))
             elif pip_args[0] != "install":
                 pip_args = ["install", *pip_args]
             self._run_pip(python_exe, pip_args, cwd=src_root)
@@ -225,7 +287,12 @@ class SproutInstallerEngine:
             sub_dir = validate_within_root(src_root, rel_sub)
             if not sub_dir.exists():
                 raise FileNotFoundError(f"Configured subproject not found: {sub_dir}")
-            sub_args = ["install", "--no-index", "--find-links", str(resolved_wh), "--no-build-isolation"] if resolved_wh else ["install"]
+            if resolved_wh is not None and resolved_wh.exists():
+                sub_args = ["install", "--no-index", "--find-links", str(resolved_wh), "--no-build-isolation"]
+            elif self._can_skip_build_isolation(python_exe, sub_dir):
+                sub_args = ["install", "--no-build-isolation"]
+            else:
+                sub_args = ["install"]
             sub_args.extend(["-e", str(sub_dir)] if editable else [str(sub_dir)])
             self._run_pip(python_exe, sub_args, cwd=sub_dir)
 
@@ -319,11 +386,21 @@ class SproutInstallerEngine:
         python_exe = Path(mvenv_rec.python_path).resolve()
         assigned_port = int(port or manifest.distribution.default_port or 8000)
 
+        artifacts_target = version_dir / "artifacts"
         pre_hook_rel = manifest.distribution.hooks.get("pre_install")
         if pre_hook_rel:
             hook_base = payload_root if (payload_root / pre_hook_rel).exists() else src_root
             hook_path = validate_within_root(hook_base, pre_hook_rel)
-            self._run_hook("pre_install", hook_path, python_exe, install_root, payload_root, manifest, assigned_port)
+            self._run_hook(
+                "pre_install",
+                hook_path,
+                python_exe,
+                install_root,
+                payload_root,
+                manifest,
+                assigned_port,
+                artifacts_dir=artifacts_target,
+            )
 
         install_target_src = src_root if editable else src_copy_target
         self._install_dependencies_and_source(
@@ -339,7 +416,44 @@ class SproutInstallerEngine:
         if post_hook_rel:
             hook_base = payload_root if (payload_root / post_hook_rel).exists() else src_root
             hook_path = validate_within_root(hook_base, post_hook_rel)
-            self._run_hook("post_install", hook_path, python_exe, install_root, payload_root, manifest, assigned_port)
+            self._run_hook(
+                "post_install",
+                hook_path,
+                python_exe,
+                install_root,
+                payload_root,
+                manifest,
+                assigned_port,
+                artifacts_dir=artifacts_target,
+            )
+
+        for raw_cmd in manifest.distribution.post_install_commands:
+            cmd_str = (
+                str(raw_cmd)
+                .replace("{python}", str(python_exe))
+                .replace("{port}", str(assigned_port))
+                .replace("{install_dir}", str(install_root))
+                .replace("{app_root}", str(payload_root))
+                .replace("{artifacts_dir}", str(artifacts_target))
+                .strip()
+            )
+            if not cmd_str:
+                continue
+            tokens = shlex.split(cmd_str, posix=(platform.system().lower() != "windows"))
+            if not tokens:
+                continue
+            cmd_res = subprocess.run(
+                tokens,
+                cwd=str(install_root),
+                capture_output=True,
+                text=True,
+                shell=False,
+                timeout=120,
+            )
+            if cmd_res.returncode != 0:
+                raise RuntimeError(
+                    f"post_install_commands entry {raw_cmd!r} failed: {cmd_res.stderr or cmd_res.stdout}"
+                )
 
         entrypoint_cmd = manifest.distribution.entrypoint_command or (
             manifest.gui_entry_points[0].entry_command if manifest.gui_entry_points else f"{app_id}"
@@ -547,6 +661,11 @@ class SproutInstallerEngine:
             shortcut_path = Path(shortcut_str)
             if shortcut_path.exists():
                 shortcut_path.unlink()
+        else:
+            d_dir = resolve_user_desktop_dir()
+            for cand in (d_dir / f"{safe_id}.cmd", d_dir / f"aurasprout-{safe_id}.desktop"):
+                if cand.exists():
+                    cand.unlink()
 
         configure_user_autostart(safe_id, [], enabled=False)
 
