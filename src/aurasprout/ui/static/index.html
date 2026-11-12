@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AuraSprout - User-Space Cell &amp; App Management Portal</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --ok: #34d399;
+      --warn: #fbbf24;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #0b1120;
+    }
+    .brand { font-size: 1.25rem; font-weight: 700; color: var(--accent); }
+    .status-pill {
+      padding: 0.25rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      background: #134e4a;
+      color: var(--ok);
+    }
+    main { max-width: 1180px; margin: 1.5rem auto; padding: 0 1rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.15rem;
+    }
+    h2 { margin: 0 0 0.75rem 0; font-size: 1.05rem; color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td {
+      text-align: left;
+      padding: 0.45rem 0.35rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 600; }
+    button {
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.32rem 0.65rem;
+      cursor: pointer;
+      font-size: 0.8rem;
+      margin-right: 0.25rem;
+    }
+    button.warn { background: #d97706; }
+    button.danger { background: #dc2626; }
+    input {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
+      width: 100%;
+      margin-bottom: 0.5rem;
+    }
+    .toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.65rem; }
+    .muted { color: var(--muted); font-size: 0.84rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <span class="brand">AuraSprout</span>
+      <span class="muted">Zero-Privilege Cell &amp; Application Manager</span>
+    </div>
+    <span id="auth-status" class="status-pill">Connecting...</span>
+  </header>
+  <main>
+    <div class="grid">
+      <section class="card">
+        <h2>Installed Applications</h2>
+        <div id="apps-list" class="muted">Loading...</div>
+      </section>
+      <section class="card">
+        <h2>Catalog &amp; Sources</h2>
+        <div class="toolbar">
+          <input id="catalog-search" type="search" placeholder="Search catalog..." />
+          <button id="btn-refresh-catalog" type="button">Search</button>
+        </div>
+        <div id="catalog-list" class="muted">Loading...</div>
+      </section>
+      <section class="card">
+        <h2>Volunteer Opt-In &amp; Leases</h2>
+        <div id="volunteer-list" class="muted">Loading...</div>
+      </section>
+      <section class="card">
+        <h2>Conflicts &amp; Deconfliction</h2>
+        <div id="conflicts-list" class="muted">No active conflicts.</div>
+      </section>
+      <section class="card" style="grid-column: 1 / -1;">
+        <h2>Discovered Runtimes &amp; Sovereign MVenvs (AuraSeed)</h2>
+        <div id="runtimes-list" class="muted">Loading...</div>
+      </section>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
+

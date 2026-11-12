@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aurasprout"
+version = "0.1.0"
+description = "User-space zero-privilege AuraGrid cell coordination, application catalog, installer, and supervision layer."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "auraseed>=1.1.0",
+    "auragrid>=4.3.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.25.0",
+]
+
+[project.scripts]
+aurasprout = "aurasprout.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["aurasprout*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
