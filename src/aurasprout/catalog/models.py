@@ -1,8 +1,7 @@
 """Canonical Application Manifest & Unified Catalog Models for AuraSprout.
 
 Implements `auragrid-api/schemas/app.manifest.schema.json` and
-`auragrid-api/schemas/catalog.schema.json` with automatic migration support
-for legacy AuraSeed `app.json` manifests.
+`auragrid-api/schemas/catalog.schema.json`.
 """
 
 from __future__ import annotations
@@ -303,72 +302,40 @@ class AppManifest:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AppManifest":
-        # Detect legacy app.json format vs canonical app.manifest.json
-        if "appId" in data or "services" in data:
-            app_id = validate_identifier(str(data.get("appId", "")), "appId")
-            display_name = str(data.get("name") or app_id)
-            services_raw = data.get("services")
-            if not isinstance(services_raw, list):
-                raise ValueError("app.manifest.json requires 'services' array")
-            services = [MasDefinition.from_dict(s) for s in services_raw]
-            gui_eps = [GuiEntryPoint.from_dict(g) for g in (data.get("guiEntryPoints") or [])]
-            dist_raw = data.get("distribution")
-            dist = DistributionConfig.from_dict(dist_raw) if isinstance(dist_raw, dict) else DistributionConfig()
-            return cls(
-                app_id=app_id,
-                name=display_name,
-                version=str(data.get("version") or "1.0.0"),
-                description=str(data.get("description") or ""),
-                services=services,
-                gui_entry_points=gui_eps,
-                installer=ExecutableDefinition.from_dict(data["installer"]) if isinstance(data.get("installer"), dict) else None,
-                startup=ExecutableDefinition.from_dict(data["startup"]) if isinstance(data.get("startup"), dict) else None,
-                shutdown=ExecutableDefinition.from_dict(data["shutdown"]) if isinstance(data.get("shutdown"), dict) else None,
-                uninstall=ExecutableDefinition.from_dict(data["uninstall"]) if isinstance(data.get("uninstall"), dict) else None,
-                provides_contracts=list(data.get("providesContracts") or []),
-                dependencies=list(data.get("dependencies") or []),
-                distribution=dist,
-                schema_uri=data.get("$schema"),
-            )
-
-        # Legacy AuraSeed app.json migration path
-        legacy_name = validate_identifier(str(data.get("name", "app")), "app name")
-        display_name = str(data.get("display_name") or legacy_name)
-        dist = DistributionConfig.from_dict(data)
-        entrypoint = str(data.get("entrypoint_command") or "").strip()
-        synthesized_services: List[MasDefinition] = []
-        if entrypoint:
-            synthesized_services.append(
-                MasDefinition(
-                    mas_id=legacy_name,
-                    mode="LocalOnly",
-                    runtime="Python",
-                    display_name=display_name,
-                    python_config=PythonMasConfig(arguments=entrypoint),
-                )
-            )
+        app_id = validate_identifier(str(data.get("appId", "")), "appId")
+        display_name = str(data.get("name") or app_id)
+        services_raw = data.get("services")
+        if not isinstance(services_raw, list):
+            raise ValueError("app.manifest.json requires 'services' array")
+        services = [MasDefinition.from_dict(s) for s in services_raw]
+        gui_eps = [GuiEntryPoint.from_dict(g) for g in (data.get("guiEntryPoints") or [])]
+        dist_raw = data.get("distribution")
+        dist = DistributionConfig.from_dict(dist_raw) if isinstance(dist_raw, dict) else DistributionConfig()
         return cls(
-            app_id=legacy_name,
+            app_id=app_id,
             name=display_name,
             version=str(data.get("version") or "1.0.0"),
             description=str(data.get("description") or ""),
-            services=synthesized_services,
+            services=services,
+            gui_entry_points=gui_eps,
+            installer=ExecutableDefinition.from_dict(data["installer"]) if isinstance(data.get("installer"), dict) else None,
+            startup=ExecutableDefinition.from_dict(data["startup"]) if isinstance(data.get("startup"), dict) else None,
+            shutdown=ExecutableDefinition.from_dict(data["shutdown"]) if isinstance(data.get("shutdown"), dict) else None,
+            uninstall=ExecutableDefinition.from_dict(data["uninstall"]) if isinstance(data.get("uninstall"), dict) else None,
+            provides_contracts=list(data.get("providesContracts") or []),
+            dependencies=list(data.get("dependencies") or []),
             distribution=dist,
+            schema_uri=data.get("$schema"),
         )
 
     @classmethod
     def from_file(cls, path: Path) -> "AppManifest":
         target = Path(path).resolve()
         if target.is_dir():
-            for candidate in ("app.manifest.json", "app.json", "auraseed-app.json", "manifest.json"):
-                cand_path = target / candidate
-                if cand_path.exists():
-                    target = cand_path
-                    break
-            else:
-                raise FileNotFoundError(
-                    f"No application manifest (app.manifest.json or app.json) found in {target}"
-                )
+            cand_path = target / "app.manifest.json"
+            if not cand_path.exists():
+                raise FileNotFoundError(f"No app.manifest.json found in {target}")
+            target = cand_path
 
         data = json.loads(target.read_text(encoding="utf-8"))
         manifest = cls.from_dict(data)

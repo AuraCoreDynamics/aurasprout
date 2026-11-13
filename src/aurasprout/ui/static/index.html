@@ -101,10 +101,19 @@
       <section class="card">
         <h2>Catalog &amp; Sources</h2>
         <div class="toolbar">
+          <input id="catalog-source-url" type="text" placeholder="Attach catalog URL or local path..." />
+          <button id="btn-attach-source" type="button">Attach</button>
+        </div>
+        <div id="sources-list" class="muted" style="margin-bottom:0.65rem;">Loading sources...</div>
+        <div class="toolbar">
           <input id="catalog-search" type="search" placeholder="Search catalog..." />
           <button id="btn-refresh-catalog" type="button">Search</button>
         </div>
         <div id="catalog-list" class="muted">Loading...</div>
+      </section>
+      <section class="card" style="grid-column: 1 / -1;">
+        <h2>Application Details &amp; GUI Entry Points</h2>
+        <div id="app-details" class="muted">Select an installed application (&ldquo;Details&rdquo;) to inspect its metadata, services, and launchable GUI entry points.</div>
       </section>
       <section class="card">
         <h2>Volunteer Opt-In &amp; Leases</h2>

@@ -19,7 +19,9 @@ from aurasprout.contracts.paths import SproutPaths
 from aurasprout.installer.autostart import generate_launchers
 from aurasprout.installer.engine import SproutInstallerEngine
 from aurasprout.installer.self_install import (
+    _stage_icon_asset,
     _win_delete_registry_tree,
+    install_standalone,
     uninstall_self,
 )
 from aurasprout.ui.server import ManagementServerState, SproutManagementServer
@@ -158,6 +160,8 @@ def test_generate_launchers_handles_console_script_and_dash_m(tmp_path: Path) ->
     scripts_dir.mkdir(parents=True, exist_ok=True)
     py_exe = scripts_dir / ("python.exe" if is_win else "python")
     py_exe.write_text("", encoding="utf-8")
+    if is_win:
+        (scripts_dir / "pythonw.exe").write_text("", encoding="utf-8")
     console_exe = scripts_dir / ("myapp.exe" if is_win else "myapp")
     console_exe.write_text("", encoding="utf-8")
 
@@ -166,6 +170,11 @@ def test_generate_launchers_handles_console_script_and_dash_m(tmp_path: Path) ->
     script_text = Path(l1["bat"] if is_win else l1["sh"]).read_text(encoding="utf-8")
     assert str(console_exe) in script_text
     assert "-m myapp" not in script_text
+    if is_win:
+        assert Path(l1["pyw"]).exists()
+        assert Path(l1["pythonw"]).name.lower() == "pythonw.exe"
+        pyw_text = Path(l1["pyw"]).read_text(encoding="utf-8")
+        assert "CREATE_NO_WINDOW" in pyw_text and "console_scripts" in pyw_text
 
     # 2. `-m module` should never duplicate `-m -m`
     l2 = generate_launchers(tmp_path / "app2", "modapp", py_exe, "-m modapp.cli --port {port}", port=9001)
@@ -257,3 +266,68 @@ def test_uninstall_self_cleans_os_registry_env_and_dirs(tmp_path: Path) -> None:
         for k in (win_root, win_uninst, win_env):
             if k:
                 _win_delete_registry_tree(k)
+
+
+def test_stage_icon_asset_selects_first_existing_and_copies(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.ico"
+    first_real = tmp_path / "src" / "app.ico"
+    first_real.parent.mkdir(parents=True, exist_ok=True)
+    first_real.write_bytes(b"FAKE_ICO_BYTES")
+    dest = tmp_path / "staged" / "app.ico"
+
+    staged = _stage_icon_asset([None, missing, first_real], dest)
+    assert staged == dest.resolve()
+    assert dest.exists()
+    assert dest.read_bytes() == b"FAKE_ICO_BYTES"
+    assert _stage_icon_asset([None, missing], tmp_path / "staged" / "none.ico") is None
+
+
+def test_install_standalone_stages_icons_and_passes_to_start_menu(tmp_path: Path, monkeypatch) -> None:
+    user_root = tmp_path / "user_root"
+    cell_root = tmp_path / "cell_root"
+    dest_dir = tmp_path / "standalone"
+    is_win = platform.system().lower() == "windows"
+    scripts_dir = dest_dir / ("Scripts" if is_win else "bin")
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / "pyvenv.cfg").write_text("home = mock\n", encoding="utf-8")
+    (scripts_dir / ("python.exe" if is_win else "python")).write_text("", encoding="utf-8")
+    if is_win:
+        (scripts_dir / "pythonw.exe").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout="CLEANROOM_OK\n", stderr=""),
+    )
+
+    sm_calls = []
+
+    def _fake_register_start_menu_launcher(**kwargs):
+        sm_calls.append(kwargs)
+        sc_path = tmp_path / "start_menu" / f"{kwargs['display_name']}.lnk"
+        return {"shortcut_path": str(sc_path)}
+
+    monkeypatch.setattr("auraseed.lifecycle.register_start_menu_launcher", _fake_register_start_menu_launcher)
+
+    report = install_standalone(
+        dest_dir=dest_dir,
+        user_root=user_root,
+        cell_root=cell_root,
+        dep_sources=(),
+        register_os=False,
+        add_to_path=False,
+        create_shortcut=False,
+        create_start_menu=True,
+        start_menu_dir=tmp_path / "start_menu",
+    )
+
+    expected_sprout_ico = (dest_dir / "assets" / "aurasprout.ico").resolve()
+    expected_seed_ico = (dest_dir / "assets" / "auraseed.ico").resolve()
+    assert expected_sprout_ico.exists() and expected_sprout_ico.stat().st_size > 0
+    assert expected_seed_ico.exists() and expected_seed_ico.stat().st_size > 0
+    assert report["icons"]["aurasprout"] == str(expected_sprout_ico)
+    assert report["icons"]["auraseed"] == str(expected_seed_ico)
+
+    by_app = {call["app_name"]: call for call in sm_calls}
+    assert by_app["aurasprout"]["icon_path"] == expected_sprout_ico
+    assert by_app["auraseed"]["icon_path"] == expected_seed_ico

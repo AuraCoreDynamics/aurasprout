@@ -57,14 +57,73 @@
       .replace(/"/g, "&quot;");
   }
 
+  var selectedAppId = "";
+
   async function refreshAll() {
     await Promise.all([
       loadApps(),
+      loadSources(),
       loadCatalog(),
       loadVolunteer(),
       loadConflicts(),
       loadRuntimes()
     ]);
+    if (selectedAppId) {
+      await loadAppDetails(selectedAppId);
+    }
+  }
+
+  async function loadAppDetails(appId) {
+    var box = document.getElementById("app-details");
+    if (!box) return;
+    selectedAppId = appId;
+    try {
+      var d = await apiFetch("/api/v1/apps/" + encodeURIComponent(appId));
+      var eps = d.guiEntryPoints || [];
+      var svcs = d.services || [];
+      var html = "<div style='margin-bottom:0.75rem;'>" +
+        "<strong>" + escapeHtml(d.name) + "</strong> (<code>" + escapeHtml(d.appId) + "</code> v" + escapeHtml(d.version) +
+        " &middot; channel: " + escapeHtml(d.channel) + " &middot; port: " + escapeHtml(d.port) + ")<br/>" +
+        "<span class='muted'>" + escapeHtml(d.description || "No description.") + "</span><br/>" +
+        "<span class='muted'>Install Path: <code>" + escapeHtml(d.installPath) + "</code> &middot; MVenv: <code>" +
+        escapeHtml(d.mvenvName || "-") + "</code></span></div>";
+
+      html += "<h3 style='font-size:0.95rem;margin:0.5rem 0;'>GUI Entry Points (" + eps.length + ")</h3>";
+      if (eps.length) {
+        html += "<table><tr><th>Name</th><th>Context</th><th>Command</th><th>Description</th><th>Launch</th></tr>";
+        eps.forEach(function (ep) {
+          html += "<tr><td><strong>" + escapeHtml(ep.name) + "</strong></td><td>" +
+            escapeHtml(ep.context) + "</td><td><code>" + escapeHtml(ep.entryCommand) + "</code></td><td>" +
+            escapeHtml(ep.description || "") + "</td><td><button data-launch-ep='" + escapeHtml(ep.name) +
+            "'>Launch</button></td></tr>";
+        });
+        html += "</table>";
+      } else {
+        html += "<div class='muted'>No GUI entry points declared.</div>";
+      }
+
+      if (svcs.length) {
+        html += "<h3 style='font-size:0.95rem;margin:0.75rem 0 0.4rem 0;'>Services (" + svcs.length + ")</h3>";
+        html += "<table><tr><th>MAS ID</th><th>Mode</th><th>Runtime</th><th>State</th></tr>";
+        svcs.forEach(function (s) {
+          html += "<tr><td><code>" + escapeHtml(s.masId) + "</code></td><td>" + escapeHtml(s.mode) +
+            "</td><td>" + escapeHtml(s.runtime) + "</td><td>" + escapeHtml(s.state) + "</td></tr>";
+        });
+        html += "</table>";
+      }
+      box.innerHTML = html;
+      box.querySelectorAll("[data-launch-ep]").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+          await apiFetch("/api/v1/apps/" + encodeURIComponent(d.appId) + "/launch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entrypointName: btn.dataset.launchEp })
+          });
+        });
+      });
+    } catch (err) {
+      box.textContent = "Could not load details for " + appId + ": " + err.message;
+    }
   }
 
   async function loadApps() {
@@ -79,10 +138,16 @@
     apps.forEach(function (a) {
       html += "<tr><td><strong>" + escapeHtml(a.name) + "</strong></td><td>" +
         escapeHtml(a.version) + "</td><td>" + escapeHtml(a.mvenvName || "-") +
-        "</td><td><button data-launch='" + escapeHtml(a.appId) + "'>Launch</button>" +
+        "</td><td><button data-details='" + escapeHtml(a.appId) + "'>Details</button>" +
+        "<button data-launch='" + escapeHtml(a.appId) + "'>Launch</button>" +
         "<button class='danger' data-uninstall='" + escapeHtml(a.appId) + "'>Uninstall</button></td></tr>";
     });
     box.innerHTML = html + "</table>";
+    box.querySelectorAll("[data-details]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        await loadAppDetails(btn.dataset.details);
+      });
+    });
     box.querySelectorAll("[data-launch]").forEach(function (btn) {
       btn.addEventListener("click", async function () {
         await apiFetch("/api/v1/apps/" + encodeURIComponent(btn.dataset.launch) + "/launch", {
@@ -96,6 +161,31 @@
     box.querySelectorAll("[data-uninstall]").forEach(function (btn) {
       btn.addEventListener("click", async function () {
         await apiFetch("/api/v1/apps/" + encodeURIComponent(btn.dataset.uninstall), { method: "DELETE" });
+        if (selectedAppId === btn.dataset.uninstall) selectedAppId = "";
+        await refreshAll();
+      });
+    });
+  }
+
+  async function loadSources() {
+    var box = document.getElementById("sources-list");
+    if (!box) return;
+    var data = await apiFetch("/api/v1/catalog/sources");
+    var sources = data.sources || [];
+    if (!sources.length) {
+      box.textContent = "No catalogs connected.";
+      return;
+    }
+    var html = "<table><tr><th>Label</th><th>Source</th><th>Action</th></tr>";
+    sources.forEach(function (s) {
+      html += "<tr><td>" + escapeHtml(s.label || s.url) + (s.isDefault ? " <em>(default)</em>" : "") +
+        "</td><td><code>" + escapeHtml(s.url) + "</code></td><td><button class='danger' data-rm-src='" +
+        escapeHtml(s.url) + "'>Remove</button></td></tr>";
+    });
+    box.innerHTML = html + "</table>";
+    box.querySelectorAll("[data-rm-src]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        await apiFetch("/api/v1/catalog/sources?url=" + encodeURIComponent(btn.dataset.rmSrc), { method: "DELETE" });
         await refreshAll();
       });
     });
@@ -212,6 +302,21 @@
     var searchBtn = document.getElementById("btn-refresh-catalog");
     if (searchBtn) {
       searchBtn.addEventListener("click", loadCatalog);
+    }
+    var attachBtn = document.getElementById("btn-attach-source");
+    if (attachBtn) {
+      attachBtn.addEventListener("click", async function () {
+        var inp = document.getElementById("catalog-source-url");
+        var url = inp ? inp.value.trim() : "";
+        if (!url) return;
+        await apiFetch("/api/v1/catalog/sources", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: url, label: url })
+        });
+        inp.value = "";
+        await refreshAll();
+      });
     }
     if (await exchangeTokenIfPresent()) {
       await refreshAll();

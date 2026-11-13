@@ -10,6 +10,7 @@ import logging
 import os
 import platform
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -19,11 +20,11 @@ _LOG = logging.getLogger(__name__)
 
 
 def _resolve_launcher_parts(python_exe: Path, cmd_rendered: str) -> tuple[str, str]:
-    """Return `(executable_or_python, arguments)` handling `-m ...`, `python ...`, and console scripts."""
+    """Return `(executable_or_python, arguments)` handling `-m/-c`, `.py`, `python ...`, and console scripts."""
     stripped = (cmd_rendered or "").strip()
     if not stripped:
         return str(python_exe), ""
-    if stripped.startswith("-m "):
+    if stripped.startswith(("-m ", "-c ")):
         return str(python_exe), stripped
 
     try:
@@ -34,22 +35,177 @@ def _resolve_launcher_parts(python_exe: Path, cmd_rendered: str) -> tuple[str, s
         return str(python_exe), ""
 
     first = tokens[0]
+    first_unquoted = first[1:-1] if len(first) >= 2 and first[0] == first[-1] and first[0] in ('"', "'") else first
     rest = " ".join(tokens[1:]) if platform.system().lower() == "windows" else " ".join(shlex.quote(t) for t in tokens[1:])
-    if Path(first).name.lower() in ("python", "python3", "python.exe"):
+    if Path(first_unquoted).name.lower() in ("python", "python3", "python.exe"):
         return str(python_exe), rest
+    if first_unquoted.lower().endswith(".py"):
+        return str(python_exe), stripped
 
     scripts_dir = Path(python_exe).resolve().parent
     is_win = platform.system().lower() == "windows"
     script_candidates = (
-        [scripts_dir / f"{first}.exe", scripts_dir / f"{first}.cmd", scripts_dir / f"{first}.bat", scripts_dir / first]
+        [
+            scripts_dir / f"{first_unquoted}.exe",
+            scripts_dir / f"{first_unquoted}.cmd",
+            scripts_dir / f"{first_unquoted}.bat",
+            scripts_dir / first_unquoted,
+        ]
         if is_win
-        else [scripts_dir / first]
+        else [scripts_dir / first_unquoted]
     )
     for cand in script_candidates:
         if cand.exists() and cand.is_file():
             return str(cand), rest
 
     return str(python_exe), f"-m {stripped}"
+
+
+def resolve_entry_point_invocation(
+    python_exe: Path,
+    entry_command: str,
+    port: int = 8000,
+    mvenv_root: Optional[Path] = None,
+    extra_args: Optional[List[str]] = None,
+) -> tuple[List[str], Dict[str, str]]:
+    """Build argv list (`shell=False`) and MVenv environment variables for launching an entry point."""
+    py_path = Path(python_exe).resolve()
+    cmd_rendered = (entry_command or "").replace("{port}", str(port)).strip()
+    exec_bin, exec_args = _resolve_launcher_parts(py_path, cmd_rendered)
+    posix_split = platform.system().lower() != "windows"
+    arg_tokens: List[str] = []
+    if exec_args:
+        try:
+            arg_tokens = shlex.split(exec_args, posix=posix_split)
+        except ValueError:
+            arg_tokens = exec_args.split()
+        # Strip literal outer quotes preserved by Windows shlex.split(posix=False)
+        if not posix_split:
+            arg_tokens = [
+                t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in ('"', "'") else t
+                for t in arg_tokens
+            ]
+    if extra_args:
+        arg_tokens.extend(str(a) for a in extra_args)
+
+    venv_dir = str(Path(mvenv_root).resolve()) if mvenv_root else str(py_path.parent.parent)
+    scripts_dir = str(py_path.parent)
+    existing_path = os.environ.get("PATH", "")
+    env_updates = {
+        "VIRTUAL_ENV": venv_dir,
+        "PATH": f"{scripts_dir}{os.pathsep}{existing_path}" if existing_path else scripts_dir,
+        "AURASPROUT_PORT": str(port),
+    }
+    return [exec_bin, *arg_tokens], env_updates
+
+
+def windowless_creationflags() -> int:
+    """Return Windows `CREATE_NO_WINDOW` creationflag (or `0` on non-Windows)."""
+    if platform.system().lower() == "windows":
+        return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return 0
+
+
+def resolve_windowless_python(python_exe: Path) -> Optional[Path]:
+    """Return sibling `pythonw.exe` next to `python_exe` on Windows when present."""
+    if platform.system().lower() != "windows":
+        return None
+    py = Path(python_exe).resolve()
+    cand = py.with_name("pythonw.exe")
+    if cand.exists() and cand.is_file():
+        return cand
+    return None
+
+
+def write_windowless_pyw_launcher(
+    pyw_path: Path,
+    python_exe: Path,
+    entry_command: str,
+    port: int = 8000,
+    mvenv_root: Optional[Path] = None,
+    log_path: Optional[Path] = None,
+    extra_env: Optional[Dict[str, str]] = None,
+) -> Path:
+    """Generate a `.pyw` windowless Python launcher that suppresses console windows cleanly."""
+    py_path = Path(python_exe).resolve()
+    cmd_rendered = (entry_command or "").replace("{port}", str(port)).strip()
+    exec_bin, exec_args = _resolve_launcher_parts(py_path, cmd_rendered)
+    argv, env_updates = resolve_entry_point_invocation(
+        python_exe=py_path,
+        entry_command=entry_command,
+        port=port,
+        mvenv_root=mvenv_root,
+    )
+    venv_dir = env_updates["VIRTUAL_ENV"]
+    scripts_dir = str(py_path.parent)
+    resolved_log = str(Path(log_path).resolve()) if log_path else ""
+    extra_defaults = {str(k): str(v) for k, v in (extra_env or {}).items()}
+    is_python_host = Path(exec_bin).resolve() == py_path
+    script_stem = Path(exec_bin).stem
+    arg_list = list(argv[1:])
+
+    pyw_target = Path(pyw_path).resolve()
+    pyw_target.parent.mkdir(parents=True, exist_ok=True)
+    pyw_code = f'''"""Auto-generated windowless GUI launcher by AuraSprout."""
+from __future__ import annotations
+
+import importlib.metadata
+import os
+import runpy
+import subprocess
+import sys
+from pathlib import Path
+
+os.environ["VIRTUAL_ENV"] = {venv_dir!r}
+_scripts_dir = {scripts_dir!r}
+_cur_path = os.environ.get("PATH", "")
+os.environ["PATH"] = _scripts_dir + os.pathsep + _cur_path if _cur_path else _scripts_dir
+os.environ["AURASPROUT_PORT"] = {str(port)!r}
+for _k, _v in {extra_defaults!r}.items():
+    os.environ.setdefault(_k, _v)
+
+if sys.stdout is None or sys.stderr is None:
+    _log_target = {resolved_log!r}
+    try:
+        if _log_target:
+            Path(_log_target).parent.mkdir(parents=True, exist_ok=True)
+            _stream = open(_log_target, "a", encoding="utf-8", buffering=1)
+        else:
+            _stream = open(os.devnull, "a", encoding="utf-8")
+    except OSError:
+        _stream = open(os.devnull, "a", encoding="utf-8")
+    if sys.stdout is None:
+        sys.stdout = _stream
+    if sys.stderr is None:
+        sys.stderr = _stream
+
+_args = {arg_list!r} + list(sys.argv[1:])
+if {is_python_host!r}:
+    if _args and _args[0] == "-m" and len(_args) >= 2:
+        _mod = _args[1]
+        sys.argv = [_mod] + _args[2:]
+        runpy.run_module(_mod, run_name="__main__", alter_sys=True)
+    elif _args and _args[0] == "-c" and len(_args) >= 2:
+        sys.argv = ["-c"] + _args[2:]
+        exec(compile(_args[1], "<aurasprout-pyw>", "exec"), {{"__name__": "__main__"}})
+    elif _args:
+        sys.argv = list(_args)
+        runpy.run_path(_args[0], run_name="__main__")
+else:
+    _eps = list(importlib.metadata.entry_points(group="console_scripts", name={script_stem!r}))
+    if not _eps:
+        _eps = list(importlib.metadata.entry_points(group="gui_scripts", name={script_stem!r}))
+    if _eps:
+        sys.argv = [{exec_bin!r}] + _args
+        _ret = _eps[0].load()()
+        if isinstance(_ret, int) and _ret != 0:
+            raise SystemExit(_ret)
+    else:
+        _flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        raise SystemExit(subprocess.call([{exec_bin!r}] + _args, creationflags=_flags))
+'''
+    pyw_target.write_text(pyw_code, encoding="utf-8")
+    return pyw_target
 
 
 def generate_launchers(
@@ -60,7 +216,7 @@ def generate_launchers(
     port: int = 8000,
     mvenv_root: Path | None = None,
 ) -> Dict[str, str]:
-    """Generate native user-space launcher scripts (`bat`/`ps1` on Windows, `sh` on POSIX)."""
+    """Generate native user-space launcher scripts (`bat`/`ps1`/`pyw` on Windows, `sh` on POSIX)."""
     safe_id = validate_identifier(app_id, "appId")
     target_dir = Path(install_dir).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -93,6 +249,21 @@ def generate_launchers(
         )
         ps1_path.write_text(ps1_content, encoding="utf-8")
         launchers["ps1"] = str(ps1_path)
+
+        app_data_dir = target_dir / "app_data"
+        log_file = (app_data_dir if app_data_dir.exists() else target_dir) / f"{safe_id}-launch.log"
+        pyw_path = write_windowless_pyw_launcher(
+            pyw_path=target_dir / f"launch-{safe_id}.pyw",
+            python_exe=py_path,
+            entry_command=entrypoint_command or safe_id,
+            port=port,
+            mvenv_root=mvenv_root,
+            log_path=log_file,
+        )
+        launchers["pyw"] = str(pyw_path)
+        pythonw_exe = resolve_windowless_python(py_path)
+        if pythonw_exe is not None:
+            launchers["pythonw"] = str(pythonw_exe)
     else:
         sh_path = target_dir / f"run-{safe_id}.sh"
         sh_tokens = " ".join(shlex.quote(tok) for tok in cmd_rendered.split()) if exec_args == f"-m {cmd_rendered.strip()}" else exec_args
@@ -153,6 +324,7 @@ def create_user_start_menu_shortcut(
     working_dir: Optional[Path] = None,
     description: str = "",
     arguments: str = "",
+    icon_path: Optional[Path] = None,
     subfolder: str = "AuraSeed",
     start_menu_dir: Optional[Path] = None,
     refresh_cache: bool = True,
@@ -168,6 +340,7 @@ def create_user_start_menu_shortcut(
         arguments=arguments,
         working_dir=working_dir,
         description=description or display_name or safe_id,
+        icon_path=icon_path,
         subfolder=subfolder,
         start_menu_dir=start_menu_dir,
         refresh_cache=refresh_cache,
@@ -181,6 +354,7 @@ def create_user_desktop_shortcut(
     display_name: str,
     launcher_path: Path,
     desktop_dir: Optional[Path] = None,
+    pythonw_path: Optional[Path] = None,
 ) -> Optional[Path]:
     """Create a user-space desktop shortcut without COM/`_winapi`/`ctypes`."""
     safe_id = validate_identifier(app_id, "appId")
@@ -191,10 +365,17 @@ def create_user_desktop_shortcut(
     sys_name = platform.system().lower()
     if sys_name == "windows":
         cmd_shortcut = desktop / f"{safe_id}.cmd"
-        cmd_shortcut.write_text(
-            f'@echo off\r\ncall "{Path(launcher_path).resolve()}" %*\r\n',
-            encoding="utf-8",
-        )
+        resolved_launcher = Path(launcher_path).resolve()
+        if resolved_launcher.suffix.lower() == ".pyw" and pythonw_path is not None:
+            cmd_shortcut.write_text(
+                f'@echo off\r\nstart "" /B "{Path(pythonw_path).resolve()}" "{resolved_launcher}" %*\r\n',
+                encoding="utf-8",
+            )
+        else:
+            cmd_shortcut.write_text(
+                f'@echo off\r\ncall "{resolved_launcher}" %*\r\n',
+                encoding="utf-8",
+            )
         return cmd_shortcut
 
     desktop_entry = desktop / f"aurasprout-{safe_id}.desktop"

@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from aurasprout.catalog.models import AppManifest, MasDefinition
 from aurasprout.contracts.paths import SproutPaths, validate_identifier, validate_within_root
+from aurasprout.installer.autostart import resolve_entry_point_invocation
 from aurasprout.installer.registry import InstalledAppsRegistry
 from aurasprout.ipc.server import IpcBridgeServer
 
@@ -207,7 +208,9 @@ class SproutSupervisor:
             "shell": False,
         }
         if platform.system().lower() == "windows":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(
+                subprocess, "CREATE_NO_WINDOW", 0
+            )
         else:
             kwargs["start_new_session"] = True
 
@@ -272,22 +275,35 @@ class SproutSupervisor:
 
         python_exe = Path(app.python_path).resolve() if app.python_path else Path(sys.executable).resolve()
         src_root = version_dir / "src" if (version_dir / "src").exists() else version_dir
+        app_data_dir = install_root / "app_data"
+        launch_cwd = app_data_dir if app_data_dir.exists() else src_root
 
         if manifest.gui_entry_points:
-            chosen = manifest.gui_entry_points[0]
             if entrypoint_name:
-                for ep in manifest.gui_entry_points:
-                    if ep.name == entrypoint_name:
-                        chosen = ep
-                        break
-            tokens = shlex.split(chosen.entry_command)
-            cmd = [str(python_exe), *tokens] if chosen.context == "Python" else tokens
+                matches = [ep for ep in manifest.gui_entry_points if ep.name == entrypoint_name]
+                if not matches:
+                    raise KeyError(f"GUI entry point {entrypoint_name!r} not found for {app.app_id!r}")
+                chosen = matches[0]
+            else:
+                chosen = manifest.gui_entry_points[0]
+            if chosen.context == "Python":
+                cmd, env_updates = resolve_entry_point_invocation(
+                    python_exe=python_exe,
+                    entry_command=chosen.entry_command,
+                    port=app.port,
+                    mvenv_root=Path(app.mvenv_path) if app.mvenv_path else None,
+                )
+            else:
+                rendered = chosen.entry_command.replace("{port}", str(app.port))
+                cmd = shlex.split(rendered, posix=(platform.system().lower() != "windows"))
+                env_updates = None
             st = self.start_process(
                 mas_id=f"{app.app_id}-gui-{chosen.name}",
                 app_id=app.app_id,
                 mode="LocalOnly",
                 command=cmd,
-                cwd=src_root,
+                cwd=launch_cwd,
+                extra_env=env_updates,
                 volunteer_enabled=False,
             )
             return st.pid

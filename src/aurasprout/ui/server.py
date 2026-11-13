@@ -441,10 +441,8 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
             if "/" not in rest:
                 app_id = rest
                 if method == "GET":
-                    rec = st.registry.get(app_id)
-                    if rec is None:
-                        raise KeyError(f"Installed application {app_id!r} not found")
-                    self._send_json(200, rec.to_summary_dict())
+                    details = st.installer.get_app_details(app_id)
+                    self._send_json(200, details)
                     return
                 if method == "DELETE":
                     removed = st.installer.uninstall_app(app_id)
@@ -511,6 +509,16 @@ class _ManagementRequestHandler(BaseHTTPRequestHandler):
                     set_default=bool(body.get("isDefault", False)),
                 )
                 self._send_json(200, src)
+                return
+            if method == "DELETE":
+                target_url = query.get("url", [None])[0]
+                if not target_url:
+                    body = self._read_json()
+                    target_url = body.get("url")
+                if not target_url:
+                    raise ValueError("Provide 'url' query param or JSON body to remove a catalog source")
+                removed = st.sources_registry.remove_source(str(target_url))
+                self._send_json(200, {"url": str(target_url), "removed": removed})
                 return
 
         if method == "POST" and path == "/api/v1/catalog/publish":

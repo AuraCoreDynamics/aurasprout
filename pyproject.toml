@@ -22,6 +22,9 @@ aurasprout = "aurasprout.cli:main"
 where = ["src"]
 include = ["aurasprout*"]
 
+[tool.setuptools.package-data]
+aurasprout = ["ui/static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

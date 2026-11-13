@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from aurasprout.contracts.paths import SproutPaths, default_user_data_root
-from aurasprout.installer.autostart import create_user_desktop_shortcut, resolve_user_desktop_dir
+from aurasprout.installer.autostart import (
+    create_user_desktop_shortcut,
+    resolve_user_desktop_dir,
+    resolve_windowless_python,
+    write_windowless_pyw_launcher,
+)
 from aurasprout.installer.engine import SproutInstallerEngine
 
 
@@ -188,6 +193,17 @@ def _detect_workspace_sources(explicit_source: Optional[Path] = None) -> Tuple[O
     return src_root, sibling_deps
 
 
+def _stage_icon_asset(candidates: Sequence[Optional[Path]], dest: Path) -> Optional[Path]:
+    """Locate the first existing icon file from candidates and stage it at `dest`."""
+    for cand in candidates:
+        if cand is not None and cand.exists() and cand.is_file():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if cand.resolve() != dest.resolve():
+                shutil.copy2(cand, dest)
+            return dest.resolve()
+    return None
+
+
 def install_standalone(
     *,
     dest_dir: Optional[Path] = None,
@@ -319,26 +335,80 @@ def install_standalone(
         launchers["sh"] = str(sh_path)
 
     primary_launcher = launchers.get("bat") or launchers.get("ps1") or launchers.get("sh")
+    pythonw_exe = resolve_windowless_python(venv_py) if is_win else None
+    sprout_pyw: Optional[Path] = None
+    seed_pyw: Optional[Path] = None
+    if is_win:
+        env_defaults = {
+            "AURASPROUT_HOME": str(resolved_user_root),
+            "AURASPROUT_STANDALONE_DIR": str(target_dir),
+        }
+        sprout_pyw = write_windowless_pyw_launcher(
+            pyw_path=bin_dir / "launch-aurasprout-desktop.pyw",
+            python_exe=venv_py,
+            entry_command="-m aurasprout desktop",
+            mvenv_root=target_dir,
+            log_path=resolved_user_root / "aurasprout-desktop.log",
+            extra_env=env_defaults,
+        )
+        seed_pyw = write_windowless_pyw_launcher(
+            pyw_path=bin_dir / "launch-auraseed-gui.pyw",
+            python_exe=venv_py,
+            entry_command="-m auraseed gui",
+            mvenv_root=target_dir,
+            log_path=resolved_user_root / "auraseed-gui.log",
+            extra_env=env_defaults,
+        )
+        launchers["pyw"] = str(sprout_pyw)
+
     shortcut_path: Optional[Path] = None
     if create_shortcut and primary_launcher:
         shortcut_path = create_user_desktop_shortcut(
             app_id="aurasprout",
             display_name="AuraSprout",
-            launcher_path=Path(primary_launcher),
+            launcher_path=sprout_pyw if (pythonw_exe and sprout_pyw) else Path(primary_launcher),
             desktop_dir=desktop_dir,
+            pythonw_path=pythonw_exe,
         )
+
+    assets_dir = target_dir / "assets"
+    sprout_ico_candidates: List[Optional[Path]] = [
+        target_dir / "Lib" / "site-packages" / "aurasprout" / "ui" / "static" / "aurasprout.ico",
+        Path(__file__).resolve().parents[1] / "ui" / "static" / "aurasprout.ico",
+        (resolved_src / "assets" / "aurasprout.ico") if resolved_src else None,
+    ]
+    sprout_icon = _stage_icon_asset(sprout_ico_candidates, assets_dir / "aurasprout.ico")
+
+    import auraseed as _auraseed_pkg
+
+    seed_ico_candidates: List[Optional[Path]] = [
+        target_dir / "Lib" / "site-packages" / "auraseed" / "assets" / "auraseed.ico",
+        Path(_auraseed_pkg.__file__).resolve().parent / "assets" / "auraseed.ico",
+    ]
+    for dep in install_deps:
+        if dep.name.lower() == "auraseed":
+            seed_ico_candidates.extend(
+                [
+                    dep / "auraseed" / "assets" / "auraseed.ico",
+                    dep / "assets" / "auraseed.ico",
+                ]
+            )
+    seed_icon = _stage_icon_asset(seed_ico_candidates, assets_dir / "auraseed.ico")
 
     start_menu_shortcuts: List[str] = []
     if create_start_menu and primary_launcher:
         from auraseed.lifecycle import register_start_menu_launcher
 
+        sprout_target = pythonw_exe if (pythonw_exe and sprout_pyw) else Path(primary_launcher)
+        sprout_args = f'"{sprout_pyw}"' if (pythonw_exe and sprout_pyw) else "desktop"
         sprout_sm = register_start_menu_launcher(
             app_name="aurasprout",
-            target_path=Path(primary_launcher),
+            target_path=sprout_target,
             display_name="AuraSprout",
-            arguments="desktop",
+            arguments=sprout_args,
             working_dir=resolved_user_root,
             description="AuraSprout Application Catalog & Desktop Hub",
+            icon_path=sprout_icon,
             subfolder="AuraSeed",
             start_menu_dir=start_menu_dir,
             refresh_cache=False,
@@ -346,13 +416,16 @@ def install_standalone(
         if sprout_sm.get("shortcut_path"):
             start_menu_shortcuts.append(str(sprout_sm["shortcut_path"]))
 
+        seed_target = pythonw_exe if (pythonw_exe and seed_pyw) else venv_py
+        seed_args = f'"{seed_pyw}"' if (pythonw_exe and seed_pyw) else "-m auraseed gui"
         seed_sm = register_start_menu_launcher(
             app_name="auraseed",
-            target_path=venv_py,
+            target_path=seed_target,
             display_name="AuraSeed",
-            arguments="-m auraseed gui",
+            arguments=seed_args,
             working_dir=resolved_user_root,
             description="AuraSeed MVenv Manager & Runtime Discovery",
+            icon_path=seed_icon,
             subfolder="AuraSeed",
             start_menu_dir=start_menu_dir,
             refresh_cache=True,
@@ -432,6 +505,10 @@ def install_standalone(
         "launchers": launchers,
         "desktop_shortcut": str(shortcut_path) if shortcut_path else None,
         "start_menu_shortcuts": start_menu_shortcuts,
+        "icons": {
+            "aurasprout": str(sprout_icon) if sprout_icon else None,
+            "auraseed": str(seed_icon) if seed_icon else None,
+        },
         "installed_at": datetime.now(timezone.utc).isoformat(),
     }
     receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")

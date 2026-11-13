@@ -37,23 +37,20 @@ def _extract_manifest_from_archive(archive_path: Path) -> AppManifest:
     target = Path(archive_path).resolve()
     if zipfile.is_zipfile(target):
         with zipfile.ZipFile(target, "r") as zf:
-            names = set(zf.namelist())
-            for cand in ("app.manifest.json", "app.json"):
-                if cand in names:
-                    data = json.loads(zf.read(cand).decode("utf-8"))
-                    return AppManifest.from_dict(data)
+            if "app.manifest.json" in zf.namelist():
+                data = json.loads(zf.read("app.manifest.json").decode("utf-8"))
+                return AppManifest.from_dict(data)
     elif tarfile.is_tarfile(target):
         with tarfile.open(target, "r:*") as tf:
-            for cand in ("app.manifest.json", "app.json"):
-                try:
-                    member = tf.getmember(cand)
-                    fobj = tf.extractfile(member)
-                    if fobj is not None:
-                        data = json.loads(fobj.read().decode("utf-8"))
-                        return AppManifest.from_dict(data)
-                except KeyError:
-                    continue
-    raise ValueError(f"Package archive {target} missing app.manifest.json / app.json")
+            try:
+                member = tf.getmember("app.manifest.json")
+                fobj = tf.extractfile(member)
+                if fobj is not None:
+                    data = json.loads(fobj.read().decode("utf-8"))
+                    return AppManifest.from_dict(data)
+            except KeyError:
+                pass
+    raise ValueError(f"Package archive {target} missing app.manifest.json")
 
 
 class SproutCatalogManager:

@@ -128,7 +128,11 @@ def test_management_server_auth_csrf_origin_and_openapi_routes(tmp_path: Path) -
 
             apps_list = client.get("/api/v1/apps", headers=headers).json()["apps"]
             assert any(a["appId"] == "web-demo" for a in apps_list)
-            assert client.get("/api/v1/apps/web-demo", headers=headers).status_code == 200
+            detail_resp = client.get("/api/v1/apps/web-demo", headers=headers)
+            assert detail_resp.status_code == 200
+            detail_body = detail_resp.json()
+            assert detail_body["appId"] == "web-demo"
+            assert "guiEntryPoints" in detail_body and len(detail_body["guiEntryPoints"]) >= 1
 
             vol_list = client.get("/api/v1/volunteer", headers=headers).json()["services"]
             assert vol_list[0]["volunteerEnabled"] is False

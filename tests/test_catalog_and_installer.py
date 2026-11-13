@@ -19,7 +19,7 @@ from aurasprout.contracts.paths import SproutPaths
 from aurasprout.installer.engine import SproutInstallerEngine
 
 
-def _make_sample_app(root: Path, app_id: str = "geo-demo", version: str = "1.0.0", legacy: bool = False) -> Path:
+def _make_sample_app(root: Path, app_id: str = "geo-demo", version: str = "1.0.0") -> Path:
     root.mkdir(parents=True, exist_ok=True)
     pkg_dir = root / "geo_demo"
     pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -42,57 +42,51 @@ def _make_sample_app(root: Path, app_id: str = "geo-demo", version: str = "1.0.0
         "(install_dir / 'hook_ran.txt').write_text(os.environ['AURASPROUT_VERSION'], encoding='utf-8')\n",
         encoding="utf-8",
     )
-    if legacy:
-        manifest = {
-            "name": app_id,
-            "display_name": "Legacy Geo Demo",
-            "version": version,
-            "description": "Legacy app.json migration fixture",
-            "entrypoint_command": "geo_demo.worker",
-            "default_port": 8081,
-            "hooks": {"post_install": "hooks/post_install.py"},
-        }
-        (root / "app.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    else:
-        manifest = {
-            "appId": app_id,
-            "name": "Geo Demo",
-            "version": version,
-            "description": "Canonical app.manifest.json fixture",
-            "services": [
-                {
-                    "masId": f"{app_id}-local",
-                    "mode": "LocalOnly",
-                    "runtime": "Python",
-                    "pythonConfig": {"scriptPath": "geo_demo/worker.py"},
-                },
-                {
-                    "masId": f"{app_id}-singleton",
-                    "mode": "CellSingleton",
-                    "runtime": "Python",
-                    "pythonConfig": {"scriptPath": "geo_demo/worker.py"},
-                },
-            ],
-            "distribution": {
-                "channels": ["stable", "preview"],
-                "entrypointCommand": "-m geo_demo.worker",
-                "defaultPort": 8081,
-                "hooks": {"post_install": "hooks/post_install.py"},
-                "tags": ["geospatial", "test"],
+    manifest = {
+        "appId": app_id,
+        "name": "Geo Demo",
+        "version": version,
+        "description": "Canonical app.manifest.json fixture",
+        "services": [
+            {
+                "masId": f"{app_id}-local",
+                "mode": "LocalOnly",
+                "runtime": "Python",
+                "pythonConfig": {"scriptPath": "geo_demo/worker.py"},
             },
-        }
-        (root / "app.manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            {
+                "masId": f"{app_id}-singleton",
+                "mode": "CellSingleton",
+                "runtime": "Python",
+                "pythonConfig": {"scriptPath": "geo_demo/worker.py"},
+            },
+        ],
+        "distribution": {
+            "channels": ["stable", "preview"],
+            "entrypointCommand": "-m geo_demo.worker",
+            "defaultPort": 8081,
+            "hooks": {"post_install": "hooks/post_install.py"},
+            "tags": ["geospatial", "test"],
+        },
+    }
+    (root / "app.manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return root
 
 
-def test_legacy_app_json_migration_and_canonical_manifest(tmp_path: Path) -> None:
-    app_src = _make_sample_app(tmp_path / "legacy_src", app_id="legacy-app", version="0.2.0", legacy=True)
+def test_canonical_manifest_required_and_loads(tmp_path: Path) -> None:
+    app_src = _make_sample_app(tmp_path / "canonical_src", app_id="geo-demo", version="1.0.0")
     loaded = AppManifest.from_file(app_src)
-    assert loaded.app_id == "legacy-app"
-    assert loaded.version == "0.2.0"
-    assert len(loaded.services) == 1
+    assert loaded.app_id == "geo-demo"
+    assert loaded.version == "1.0.0"
+    assert len(loaded.services) == 2
     assert loaded.services[0].mode == "LocalOnly"
     assert loaded.distribution.hooks["post_install"] == "hooks/post_install.py"
+
+    legacy_only = tmp_path / "legacy_only"
+    legacy_only.mkdir()
+    (legacy_only / "app.json").write_text('{"name": "legacy-app"}', encoding="utf-8")
+    with pytest.raises(FileNotFoundError):
+        AppManifest.from_file(legacy_only)
 
 
 def test_package_publish_verify_install_update_and_rollback(tmp_path: Path) -> None:
@@ -284,6 +278,28 @@ def test_desktop_hub_composes_auraseed_mvenv_panel(tmp_path: Path) -> None:
 
     paths = SproutPaths(cell_root=tmp_path / "cell", user_root=tmp_path / "user")
     mvenv_mgr = MvenvManager(tmp_path / "mvenvs")
+    mvenv_mgr.create_venv(MvenvCreateRequest(name="sprout-multi-gui", base_python=sys.executable, sovereign=False))
+    app_src = _make_sample_app(tmp_path / "multi_gui_src", app_id="multi-gui", version="1.0.0")
+    manifest_data = json.loads((app_src / "app.manifest.json").read_text(encoding="utf-8"))
+    manifest_data["guiEntryPoints"] = [
+        {
+            "name": "primary",
+            "context": "Python",
+            "entryCommand": "-m geo_demo.worker",
+            "description": "Primary workbench",
+        },
+        {
+            "name": "secondary",
+            "context": "Python",
+            "entryCommand": "-c \"import os; print('EP2_PORT', os.environ.get('AURASPROUT_PORT'))\"",
+            "description": "Secondary diagnostic console",
+        },
+    ]
+    (app_src / "app.manifest.json").write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+    installer = SproutInstallerEngine(paths=paths, mvenv_manager=mvenv_mgr)
+    installer.install_from_directory(app_src, sovereign=False)
+
     try:
         root = tk.Tk()
     except tk.TclError as exc:
@@ -292,9 +308,22 @@ def test_desktop_hub_composes_auraseed_mvenv_panel(tmp_path: Path) -> None:
 
     hub = None
     try:
-        hub = SproutDesktopHub(root=root, paths=paths, mvenv_manager=mvenv_mgr)
+        hub = SproutDesktopHub(root=root, paths=paths, mvenv_manager=mvenv_mgr, installer_engine=installer)
         assert hub.mvenv_panel is not None
         assert hub.mvenv_panel.repoint_callback == hub.installer.relink_app_mvenv
+        assert len(hub.sources_registry.list_sources()) >= 1
+        assert hub.catalog_tree is not None
+        assert "multi-gui" in hub.apps_tree.get_children()
+        ep_ids = list(hub.entry_points_tree.get_children())
+        assert ep_ids == ["primary", "secondary"]
+        hub.entry_points_tree.selection_set("secondary")
+        hub.launch_port_var.set("9123")
+        hub.launch_selected_entry_point()
+        assert len(hub._launched_procs) == 1
+        assert hub._launched_procs[0]["entryPoint"] == "secondary"
+        assert hub._launched_procs[0]["proc"].wait(timeout=10) == 0
+        hub._on_catalog_loaded(hub.catalog_manager.manifest, str(paths.catalog_dir))
+        assert hub._loaded_catalog is not None
     finally:
         import gc
 

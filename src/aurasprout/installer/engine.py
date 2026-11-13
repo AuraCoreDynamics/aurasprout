@@ -31,7 +31,9 @@ from aurasprout.installer.autostart import (
     create_user_desktop_shortcut,
     create_user_start_menu_shortcut,
     generate_launchers,
+    resolve_entry_point_invocation,
     resolve_user_desktop_dir,
+    windowless_creationflags,
 )
 from aurasprout.installer.registry import (
     InstalledAppRecord,
@@ -472,23 +474,46 @@ class SproutInstallerEngine:
             primary_launcher = (
                 launchers.get("bat") or launchers.get("ps1") or launchers.get("sh")
             )
-            if primary_launcher:
+            sm_target = Path(launchers["pythonw"]) if (launchers.get("pythonw") and launchers.get("pyw")) else (
+                Path(primary_launcher) if primary_launcher else None
+            )
+            sm_args = f'"{launchers["pyw"]}"' if (launchers.get("pythonw") and launchers.get("pyw")) else ""
+            if sm_target is not None:
+                resolved_icon: Optional[Path] = None
+                raw_icon = (
+                    manifest.gui_entry_points[0].icon_path
+                    if manifest.gui_entry_points and manifest.gui_entry_points[0].icon_path
+                    else None
+                )
+                if raw_icon:
+                    for base_dir in (src_copy_target, version_dir, artifacts_target):
+                        try:
+                            cand_icon = validate_within_root(base_dir, raw_icon)
+                        except ValueError:
+                            continue
+                        if cand_icon.exists() and cand_icon.is_file():
+                            resolved_icon = cand_icon
+                            break
                 sm_shortcut = create_user_start_menu_shortcut(
                     app_id=app_id,
                     display_name=manifest.name,
-                    launcher_path=Path(primary_launcher),
+                    launcher_path=sm_target,
+                    arguments=sm_args,
                     working_dir=app_data_dir,
                     description=manifest.description or manifest.name,
+                    icon_path=resolved_icon,
                     refresh_cache=True,
                 )
                 if sm_shortcut is not None:
                     launchers["start_menu_shortcut"] = str(sm_shortcut)
             if create_shortcut and manifest.distribution.create_desktop_shortcut and primary_launcher:
+                desk_launcher = Path(launchers["pyw"]) if (launchers.get("pythonw") and launchers.get("pyw")) else Path(primary_launcher)
                 shortcut = create_user_desktop_shortcut(
                     app_id=app_id,
                     display_name=manifest.name,
-                    launcher_path=Path(primary_launcher),
+                    launcher_path=desk_launcher,
                     desktop_dir=desktop_dir,
+                    pythonw_path=Path(launchers["pythonw"]) if launchers.get("pythonw") else None,
                 )
                 if shortcut is not None:
                     launchers["desktop_shortcut"] = str(shortcut)
@@ -735,8 +760,165 @@ class SproutInstallerEngine:
                 )
                 if "desktop_shortcut" in app_rec.launchers:
                     new_launchers["desktop_shortcut"] = app_rec.launchers["desktop_shortcut"]
+                if "start_menu_shortcut" in app_rec.launchers:
+                    new_launchers["start_menu_shortcut"] = app_rec.launchers["start_menu_shortcut"]
                 app_rec.launchers = new_launchers
             self.registry.register(app_rec)
             repointed.append(app_rec.app_id)
 
         return repointed
+
+    def get_app_manifest(self, app_id: str) -> Optional[AppManifest]:
+        """Load the canonical `app.manifest.json` for an installed app's active version, if present."""
+        safe_id = validate_identifier(app_id, "appId")
+        record = self.registry.get(safe_id)
+        if record is None:
+            return None
+        install_root = Path(record.install_path).resolve()
+        manifest_path = install_root / "versions" / record.version / "app.manifest.json"
+        if not manifest_path.exists():
+            return None
+        return AppManifest.from_file(manifest_path)
+
+    def get_app_details(self, app_id: str) -> Dict[str, Any]:
+        """Return full installed app metadata, manifest fields, services, and GUI entry points."""
+        safe_id = validate_identifier(app_id, "appId")
+        record = self.registry.get(safe_id)
+        if record is None:
+            raise KeyError(f"Application {safe_id!r} is not installed")
+        manifest = self.get_app_manifest(safe_id)
+        install_root = Path(record.install_path).resolve()
+        app_data_dir = install_root / "app_data"
+
+        entry_points: List[Dict[str, Any]] = []
+        if manifest and manifest.gui_entry_points:
+            for ep in manifest.gui_entry_points:
+                entry_points.append(
+                    {
+                        "name": ep.name,
+                        "context": ep.context,
+                        "entryCommand": ep.entry_command,
+                        "description": ep.description or "",
+                        "iconPath": ep.icon_path or "",
+                    }
+                )
+        else:
+            default_cmd = (manifest.distribution.entrypoint_command if manifest else "") or safe_id
+            entry_points.append(
+                {
+                    "name": "default",
+                    "context": "Python",
+                    "entryCommand": default_cmd,
+                    "description": "Default application entrypoint",
+                    "iconPath": "",
+                }
+            )
+
+        return {
+            "appId": record.app_id,
+            "name": record.name,
+            "version": record.version,
+            "channel": record.channel,
+            "description": manifest.description if manifest else "",
+            "installPath": str(install_root),
+            "appDataDir": str(app_data_dir if app_data_dir.exists() else install_root),
+            "mvenvName": record.mvenv_name or "",
+            "mvenvPath": record.mvenv_path or "",
+            "pythonPath": record.python_path or "",
+            "port": record.port,
+            "previousVersions": list(record.previous_versions),
+            "installedAt": record.installed_at,
+            "updatedAt": record.updated_at,
+            "tags": list(manifest.distribution.tags) if manifest else [],
+            "services": [s.to_dict() for s in record.services],
+            "guiEntryPoints": entry_points,
+            "launchers": dict(record.launchers),
+            "providesContracts": list(manifest.provides_contracts) if manifest else [],
+            "dependencies": list(manifest.dependencies) if manifest else [],
+        }
+
+    def launch_entry_point(
+        self,
+        app_id: str,
+        entry_point_name: Optional[str] = None,
+        port: Optional[int] = None,
+        extra_args: Optional[List[str]] = None,
+    ) -> subprocess.Popen[Any]:
+        """Manually launch a specific GUI entry point (or the primary launcher) for an installed app."""
+        safe_id = validate_identifier(app_id, "appId")
+        record = self.registry.get(safe_id)
+        if record is None:
+            raise KeyError(f"Application {safe_id!r} is not installed")
+        manifest = self.get_app_manifest(safe_id)
+        assigned_port = int(port or record.port or 8000)
+
+        install_root = Path(record.install_path).resolve()
+        app_data_dir = install_root / "app_data"
+        work_dir = app_data_dir if app_data_dir.exists() else install_root
+
+        context = "Python"
+        entry_cmd = ""
+        if manifest and manifest.gui_entry_points:
+            chosen = None
+            if entry_point_name:
+                for ep in manifest.gui_entry_points:
+                    if ep.name == entry_point_name:
+                        chosen = ep
+                        break
+                if chosen is None:
+                    raise KeyError(f"GUI entry point {entry_point_name!r} not found for {safe_id!r}")
+            else:
+                chosen = manifest.gui_entry_points[0]
+            context = chosen.context
+            entry_cmd = chosen.entry_command
+        else:
+            if entry_point_name and entry_point_name != "default":
+                raise KeyError(f"GUI entry point {entry_point_name!r} not found for {safe_id!r}")
+            entry_cmd = (manifest.distribution.entrypoint_command if manifest else "") or safe_id
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "AURASPROUT_APP_ID": safe_id,
+                "AURASPROUT_INSTALL_DIR": str(install_root),
+                "AURASPROUT_PORT": str(assigned_port),
+            }
+        )
+
+        if context == "Python":
+            py_str = record.python_path
+            if not py_str and record.mvenv_name:
+                mv = self.mvenv_manager.get_venv(record.mvenv_name)
+                py_str = mv.python_path if mv else None
+            if not py_str:
+                raise RuntimeError(f"No Python interpreter configured for installed app {safe_id!r}")
+            argv, env_updates = resolve_entry_point_invocation(
+                python_exe=Path(py_str),
+                entry_command=entry_cmd,
+                port=assigned_port,
+                mvenv_root=Path(record.mvenv_path) if record.mvenv_path else None,
+                extra_args=extra_args,
+            )
+            env.update(env_updates)
+        elif context == "PowerShell":
+            rendered = entry_cmd.replace("{port}", str(assigned_port))
+            ps_exe = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+            if not ps_exe:
+                raise RuntimeError("PowerShell executable not found on PATH")
+            argv = [ps_exe, "-NoProfile", "-Command", rendered]
+        else:
+            rendered = entry_cmd.replace("{port}", str(assigned_port))
+            argv = shlex.split(rendered, posix=(platform.system().lower() != "windows"))
+            if extra_args:
+                argv.extend(str(a) for a in extra_args)
+
+        popen_kwargs: Dict[str, Any] = {
+            "cwd": str(work_dir),
+            "env": env,
+            "shell": False,
+        }
+        cflags = windowless_creationflags()
+        if cflags:
+            popen_kwargs["creationflags"] = cflags
+
+        return subprocess.Popen(argv, **popen_kwargs)

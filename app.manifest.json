@@ -1,0 +1,45 @@
+{
+  "$schema": "https://auragrid.io/schemas/app.manifest.schema.json",
+  "appId": "aurasprout",
+  "name": "AuraSprout - User-Space Cell & Application Hub",
+  "version": "0.1.0",
+  "description": "User-space zero-privilege AuraGrid cell coordination, application catalog, installer, desktop hub, and supervision layer.",
+  "services": [
+    {
+      "masId": "aurasprout-ui",
+      "displayName": "AuraSprout Management Web UI",
+      "mode": "LocalOnly",
+      "runtime": "Python",
+      "pythonConfig": {
+        "pythonExecutable": "python",
+        "arguments": "-m aurasprout ui --port 8770"
+      }
+    }
+  ],
+  "guiEntryPoints": [
+    {
+      "name": "desktop-hub",
+      "context": "Python",
+      "entryCommand": "-m aurasprout desktop",
+      "iconPath": "assets/aurasprout.ico",
+      "description": "Launch AuraSprout Desktop Hub (Application Catalog, Details & MVenv Manager)"
+    },
+    {
+      "name": "web-ui",
+      "context": "Python",
+      "entryCommand": "-m aurasprout ui --port {port}",
+      "iconPath": "assets/aurasprout.ico",
+      "description": "Launch AuraSprout Management Web UI server"
+    }
+  ],
+  "distribution": {
+    "channels": ["stable"],
+    "artifacts": ["assets/*.ico", "assets/*.png"],
+    "entrypointCommand": "-m aurasprout desktop",
+    "defaultPort": 8770,
+    "createDesktopShortcut": true,
+    "createLaunchers": true,
+    "tags": ["aurasprout", "catalog", "installer", "cell", "desktop"]
+  }
+}
+

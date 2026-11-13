@@ -2,7 +2,7 @@
 name: auraseed-deploy-app
 description: >-
   Deploy, install, update, rollback, package, and manage applications using the AuraSprout
-  application installer engine (`app.manifest.json` and legacy `app.json` migration).
+  application installer engine (`app.manifest.json`).
   Covers zero-privilege user-space installs, standalone self-install/cleanup, MVenv relinking, and launchers.
 ---
 
@@ -23,7 +23,7 @@ Use `aurasprout` (installed console script / standalone launcher) or `python -m 
 python -m aurasprout self-install --add-to-path --shortcut --json
 aurasprout self-uninstall --yes --json
 
-# Install from a local directory or .apkg archive (app.manifest.json or legacy app.json)
+# Install from a local directory or .apkg archive
 aurasprout install /path/to/app_or_package --shortcut --json
 
 # Install from an attached or remote HTTP catalog
@@ -39,10 +39,9 @@ aurasprout rollback my-app --json
 aurasprout uninstall my-app --remove-mvenv --json
 ```
 
-## 2. Canonical Manifest (`app.manifest.json`) & Legacy Migration (`app.json`)
+## 2. Canonical Manifest (`app.manifest.json`)
 
 - Canonical `app.manifest.json` follows `auragrid-api/schemas/app.manifest.schema.json` using placement modes `LocalOnly`, `CellSingleton`, and `Distributed`.
-- Legacy `app.json` manifests are automatically migrated on load, synthesizing a `LocalOnly` service entry if `entrypoint_command` is set.
 - Cross-platform non-admin version activation uses atomic `active_version.json` pointers alongside `app_data/` preservation across updates and rollbacks.
 - Lifecycle hooks (`pre_install`, `post_install`) and `post_install_commands` run inside the app's sovereign `auraseed` MVenv with `shell=False` and validated paths.
 

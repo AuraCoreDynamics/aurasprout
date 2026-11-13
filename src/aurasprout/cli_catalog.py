@@ -17,7 +17,7 @@ from aurasprout.installer.engine import SproutInstallerEngine
 def register_catalog_and_install_commands(subparsers: argparse._SubParsersAction) -> None:
     # package
     p_pkg = subparsers.add_parser("package", help="Package an app directory into <appId>-<version>.apkg")
-    p_pkg.add_argument("app_dir", help="Path to application root containing app.manifest.json or app.json")
+    p_pkg.add_argument("app_dir", help="Path to application root containing app.manifest.json")
     p_pkg.add_argument("--out", default="./dist", help="Output directory for .apkg")
     p_pkg.add_argument("--wheelhouse", default=None, help="Optional offline wheelhouse directory")
     p_pkg.add_argument("--format", choices=["zip", "tar.gz"], default="zip", help="Archive format")
