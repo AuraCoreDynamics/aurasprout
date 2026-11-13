@@ -29,6 +29,7 @@ from aurasprout.contracts.paths import SproutPaths, validate_identifier, validat
 from aurasprout.installer.autostart import (
     configure_user_autostart,
     create_user_desktop_shortcut,
+    create_user_start_menu_shortcut,
     generate_launchers,
     resolve_user_desktop_dir,
 )
@@ -471,6 +472,17 @@ class SproutInstallerEngine:
             primary_launcher = (
                 launchers.get("bat") or launchers.get("ps1") or launchers.get("sh")
             )
+            if primary_launcher:
+                sm_shortcut = create_user_start_menu_shortcut(
+                    app_id=app_id,
+                    display_name=manifest.name,
+                    launcher_path=Path(primary_launcher),
+                    working_dir=app_data_dir,
+                    description=manifest.description or manifest.name,
+                    refresh_cache=True,
+                )
+                if sm_shortcut is not None:
+                    launchers["start_menu_shortcut"] = str(sm_shortcut)
             if create_shortcut and manifest.distribution.create_desktop_shortcut and primary_launcher:
                 shortcut = create_user_desktop_shortcut(
                     app_id=app_id,
@@ -666,6 +678,15 @@ class SproutInstallerEngine:
             for cand in (d_dir / f"{safe_id}.cmd", d_dir / f"aurasprout-{safe_id}.desktop"):
                 if cand.exists():
                     cand.unlink()
+
+        sm_str = record.launchers.get("start_menu_shortcut")
+        if sm_str:
+            sm_path = Path(sm_str)
+            if sm_path.exists():
+                sm_path.unlink()
+                from auraseed.lifecycle import refresh_os_shell_cache
+
+                refresh_os_shell_cache(sm_path.parent)
 
         configure_user_autostart(safe_id, [], enabled=False)
 

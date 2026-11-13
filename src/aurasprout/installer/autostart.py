@@ -146,6 +146,36 @@ def resolve_user_desktop_dir(desktop_dir: Optional[Path] = None) -> Path:
     return (home / "Desktop").resolve()
 
 
+def create_user_start_menu_shortcut(
+    app_id: str,
+    display_name: str,
+    launcher_path: Path,
+    working_dir: Optional[Path] = None,
+    description: str = "",
+    arguments: str = "",
+    subfolder: str = "AuraSeed",
+    start_menu_dir: Optional[Path] = None,
+    refresh_cache: bool = True,
+) -> Optional[Path]:
+    """Register a user-space Start Menu shortcut via AuraSeed and refresh OS shell cache."""
+    from auraseed.lifecycle import register_start_menu_launcher
+
+    safe_id = validate_identifier(app_id, "appId")
+    res = register_start_menu_launcher(
+        app_name=safe_id,
+        target_path=Path(launcher_path).resolve(),
+        display_name=display_name or safe_id,
+        arguments=arguments,
+        working_dir=working_dir,
+        description=description or display_name or safe_id,
+        subfolder=subfolder,
+        start_menu_dir=start_menu_dir,
+        refresh_cache=refresh_cache,
+    )
+    sc = res.get("shortcut_path")
+    return Path(sc) if sc else None
+
+
 def create_user_desktop_shortcut(
     app_id: str,
     display_name: str,

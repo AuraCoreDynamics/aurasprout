@@ -202,6 +202,8 @@ def install_standalone(
     add_to_path: bool = False,
     create_shortcut: bool = False,
     desktop_dir: Optional[Path] = None,
+    create_start_menu: bool = True,
+    start_menu_dir: Optional[Path] = None,
     registry_root_key: str = r"Software\AuraCore\AuraSprout",
     uninstall_reg_key: str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\AuraSprout",
     env_reg_subkey: str = "Environment",
@@ -326,6 +328,38 @@ def install_standalone(
             desktop_dir=desktop_dir,
         )
 
+    start_menu_shortcuts: List[str] = []
+    if create_start_menu and primary_launcher:
+        from auraseed.lifecycle import register_start_menu_launcher
+
+        sprout_sm = register_start_menu_launcher(
+            app_name="aurasprout",
+            target_path=Path(primary_launcher),
+            display_name="AuraSprout",
+            arguments="desktop",
+            working_dir=resolved_user_root,
+            description="AuraSprout Application Catalog & Desktop Hub",
+            subfolder="AuraSeed",
+            start_menu_dir=start_menu_dir,
+            refresh_cache=False,
+        )
+        if sprout_sm.get("shortcut_path"):
+            start_menu_shortcuts.append(str(sprout_sm["shortcut_path"]))
+
+        seed_sm = register_start_menu_launcher(
+            app_name="auraseed",
+            target_path=venv_py,
+            display_name="AuraSeed",
+            arguments="-m auraseed gui",
+            working_dir=resolved_user_root,
+            description="AuraSeed MVenv Manager & Runtime Discovery",
+            subfolder="AuraSeed",
+            start_menu_dir=start_menu_dir,
+            refresh_cache=True,
+        )
+        if seed_sm.get("shortcut_path"):
+            start_menu_shortcuts.append(str(seed_sm["shortcut_path"]))
+
     registered_keys: List[str] = []
     registered_env_vars: List[str] = []
     path_updated = False
@@ -397,6 +431,7 @@ def install_standalone(
         "base_python": str(py_base),
         "launchers": launchers,
         "desktop_shortcut": str(shortcut_path) if shortcut_path else None,
+        "start_menu_shortcuts": start_menu_shortcuts,
         "installed_at": datetime.now(timezone.utc).isoformat(),
     }
     receipt_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
@@ -476,6 +511,11 @@ def uninstall_self(
                 if sc.exists():
                     sc.unlink()
                     removed_paths.append(str(sc))
+            for sm_item in rec.get("start_menu_shortcuts", []) or []:
+                sm_p = Path(str(sm_item))
+                if sm_p.exists():
+                    sm_p.unlink()
+                    removed_paths.append(str(sm_p))
             if rec.get("base_python"):
                 base_py_for_deferred = str(rec["base_python"])
         except (OSError, json.JSONDecodeError):
@@ -513,6 +553,27 @@ def uninstall_self(
                         removed_paths.append(str(cand))
             except OSError:
                 pass
+
+    try:
+        from auraseed.lifecycle import refresh_os_shell_cache, resolve_user_start_menu_dir
+
+        sm_dir = resolve_user_start_menu_dir()
+        for sub in (sm_dir / "AuraSeed", sm_dir):
+            if not sub.exists():
+                continue
+            for name in ("AuraSprout", "aurasprout", "AuraSeed", "auraseed"):
+                for ext in (".lnk", ".cmd", ".desktop", ".command"):
+                    cand = sub / f"{name}{ext}"
+                    if cand.exists():
+                        cand.unlink()
+                        if str(cand) not in removed_paths:
+                            removed_paths.append(str(cand))
+        seed_folder = sm_dir / "AuraSeed"
+        if seed_folder.exists() and seed_folder.is_dir() and not any(seed_folder.iterdir()):
+            seed_folder.rmdir()
+        refresh_os_shell_cache(sm_dir)
+    except Exception:
+        pass
 
     cfg_dir = Path(config_dir).resolve() if config_dir else (Path.home() / ".config" / "aurasprout")
     if cfg_dir.exists():
