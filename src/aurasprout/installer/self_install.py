@@ -516,7 +516,11 @@ def install_standalone(
 
     # Smoke verification inside newly provisioned cleanroom interpreter
     verify = subprocess.run(
-        [str(venv_py), "-c", "import aurasprout, auraseed, auragrid; print('CLEANROOM_OK')"],
+        [
+            str(venv_py),
+            "-c",
+            "import aurasprout, auraseed; \ntry:\n import auragrid\nexcept ImportError:\n pass\nprint('CLEANROOM_OK')",
+        ],
         capture_output=True,
         text=True,
         shell=False,

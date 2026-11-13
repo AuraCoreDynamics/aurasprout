@@ -8,7 +8,7 @@ import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 from aurasprout.catalog.crypto import compute_sha256
 from aurasprout.catalog.models import AppManifest

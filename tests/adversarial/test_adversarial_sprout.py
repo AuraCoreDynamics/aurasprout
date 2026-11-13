@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -11,13 +9,11 @@ from pathlib import Path
 import httpx
 import pytest
 from auragrid import CollaborationClient, ConflictError, IpcClient, IpcOptions, LeaseClient, StorageClient
-from httpx import HTTPStatusError
 
 from aurasprout.catalog.crypto import extract_archive_safely
 from aurasprout.catalog.models import AppManifest
 from aurasprout.contracts.paths import SproutPaths, validate_within_root
 from aurasprout.ipc.server import IpcBridgeServer
-from aurasprout.supervisor.runner import SproutSupervisor
 from aurasprout.ui.server import ManagementServerState, SproutManagementServer
 
 

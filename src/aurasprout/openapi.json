@@ -1,0 +1,265 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AuraSprout Management HTTP API",
+    "version": "0.1.1",
+    "description": "Tier 3 Loopback Management HTTP Server for AuraSprout application lifecycle, catalogs, coordination, and sovereign runtime supervision."
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health status probe",
+        "responses": {
+          "200": {
+            "description": "Health status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "summary": "V1 health status probe",
+        "responses": {
+          "200": {
+            "description": "Health status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/session": {
+      "post": {
+        "summary": "Exchange bootstrap token for session cookie and CSRF token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": { "type": "string" }
+                },
+                "required": ["token"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Session established" },
+          "401": { "description": "Invalid bootstrap token" }
+        }
+      }
+    },
+    "/api/v1/apps": {
+      "get": {
+        "summary": "List all installed applications",
+        "responses": {
+          "200": {
+            "description": "List of installed applications",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "apps": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/InstalledAppSummary" }
+                    }
+                  },
+                  "required": ["apps"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/install": {
+      "post": {
+        "summary": "Install application from package or catalog",
+        "responses": {
+          "200": { "description": "Application installed successfully" }
+        }
+      }
+    },
+    "/api/v1/apps/{appId}": {
+      "get": {
+        "summary": "Get application details",
+        "parameters": [
+          { "name": "appId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Application details" },
+          "404": { "description": "Application not found" }
+        }
+      },
+      "delete": {
+        "summary": "Uninstall application",
+        "parameters": [
+          { "name": "appId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Application uninstalled" }
+        }
+      }
+    },
+    "/api/v1/apps/{appId}/launch": {
+      "post": {
+        "summary": "Launch application entrypoint",
+        "parameters": [
+          { "name": "appId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Process launched" }
+        }
+      }
+    },
+    "/api/v1/catalog": {
+      "get": {
+        "summary": "Query application catalog",
+        "responses": {
+          "200": { "description": "Catalog search results" }
+        }
+      }
+    },
+    "/api/v1/catalog/publish": {
+      "post": {
+        "summary": "Publish application package to local catalog",
+        "responses": {
+          "200": { "description": "Package published" }
+        }
+      }
+    },
+    "/api/v1/catalog/sources": {
+      "get": {
+        "summary": "List attached catalog sources",
+        "responses": {
+          "200": { "description": "List of catalog sources" }
+        }
+      },
+      "post": {
+        "summary": "Attach new catalog source",
+        "responses": {
+          "200": { "description": "Source attached" }
+        }
+      }
+    },
+    "/api/v1/volunteer": {
+      "get": {
+        "summary": "List cell volunteer services",
+        "responses": {
+          "200": { "description": "Volunteer services status" }
+        }
+      }
+    },
+    "/api/v1/volunteer/{serviceName}": {
+      "post": {
+        "summary": "Configure volunteer mode for service",
+        "parameters": [
+          { "name": "serviceName", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Volunteer mode updated" }
+        }
+      }
+    },
+    "/api/v1/conflicts": {
+      "get": {
+        "summary": "List active deconfliction events",
+        "responses": {
+          "200": { "description": "Active conflicts" }
+        }
+      }
+    },
+    "/api/v1/conflicts/{conflictId}/resolve": {
+      "post": {
+        "summary": "Resolve conflict",
+        "parameters": [
+          { "name": "conflictId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Conflict resolved" }
+        }
+      }
+    },
+    "/api/v1/runtimes": {
+      "get": {
+        "summary": "List discovered and managed Python runtimes",
+        "responses": {
+          "200": { "description": "Discovered runtimes" }
+        }
+      }
+    },
+    "/api/v1/runtimes/discover": {
+      "post": {
+        "summary": "Trigger discovery of host Python environments",
+        "responses": {
+          "200": { "description": "Discovery results" }
+        }
+      }
+    },
+    "/api/v1/runtimes/create": {
+      "post": {
+        "summary": "Create sovereign mvenv",
+        "responses": {
+          "200": { "description": "Mvenv created" }
+        }
+      }
+    },
+    "/api/v1/runtimes/merge": {
+      "post": {
+        "summary": "Merge multiple mvenvs into consolidated environment",
+        "responses": {
+          "200": { "description": "Mvenvs merged" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ManagementHealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "Healthy" },
+          "version": { "type": "string", "example": "4.3.0" },
+          "nodeId": { "type": "string", "example": "sprout-node" }
+        },
+        "required": [
+          "status",
+          "version",
+          "nodeId"
+        ]
+      },
+      "InstalledAppSummary": {
+        "type": "object",
+        "properties": {
+          "appId": { "type": "string" },
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "channel": { "type": "string" },
+          "installDir": { "type": "string" },
+          "installedAtUtc": { "type": "string" }
+        },
+        "required": [
+          "appId",
+          "name",
+          "version",
+          "installDir"
+        ]
+      }
+    }
+  }
+}

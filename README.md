@@ -59,3 +59,39 @@ aurasprout desktop
 - **Tier 2 IPC Bridge (`aurasprout ipc`)**: Loopback `X-AuraGrid-IPC-Token` endpoints under `/health`, `/ready`, `/cell/config*`, `/cell/members*`, `/cell/governance*`, `/cell/events*`, `/cell/lease*`, `/cell/collaboration*`, `/cell/registry*`, `/cell/storage*`, `/cell/tattle`, and `/cell/chaos*`.
 - **User Data Roots**: Resolved via `AURASPROUT_HOME` -> `%LOCALAPPDATA%\AuraSprout` (Windows), `~/Library/Application Support/aurasprout` (macOS), or `$XDG_DATA_HOME/aurasprout` / `~/.local/share/aurasprout` (Linux).
 - **Environment Variables**: `AURASPROUT_HOME`, `AURASPROUT_CELL_ROOT`, `AURAGRID_CELL_ROOT`, `AURASPROUT_STANDALONE_DIR`, `AURASPROUT_UI_HOST`, `AURASPROUT_UI_PORT`, `AURASPROUT_UI_TOKEN`, `AURASPROUT_DEFAULT_CATALOG`, `AURAGRID_IPC_TOKEN`, `AURAGRID_NODE_ID`.
+
+## Proprietary AuraGrid Boundary & Offline Isolation
+
+AuraSprout coordinates with the proprietary **AuraGrid** runtime infrastructure. Because `auragrid` is proprietary software not distributed on public PyPI or available on standard CI runners:
+
+- **Optional Dependency**: AuraSprout lists `auragrid` under optional extras: `pip install -e ".[grid]"`.
+- **Zero Hard Lock**: In standard open-source and CI runner environments, AuraSprout functions and installs cleanly without requiring proprietary `auragrid` binaries.
+- **Cleanroom Test Isolation**: The test suite includes cleanroom SDK interface stubs (`tests/stubs/auragrid`) adhering to the 10 core interfaces (`IpcOptions`, `IpcClient`, `ConflictError`, `ConflictResolutionAction`, `GovernanceClient`, `EventClient`, `LeaseClient`, `StorageClient`, `RegistryClient`, `CollaborationClient`), allowing all tests and sub-process supervisor tests to run 100% offline and self-contained.
+
+## Testing & Local CI Verification
+
+To guarantee CI/CD parity, all changes must pass the exact same checks locally before pushing that GitHub Actions executes in CI:
+
+1. **All-in-One Pre-Push Verification Runner**:
+   ```bash
+   python scripts/run_ci_checks.py
+   ```
+2. **Individual Verification Steps**:
+   ```bash
+   # Linting
+   ruff check .
+
+   # Unit and integration tests (fully offline, using cleanroom stubs)
+   pytest tests/ -v
+
+   # Package distribution build
+   python -m build
+
+   # Distribution metadata validation
+   twine check dist/*
+   ```
+
+### CI/CD Architecture & GitHub Workflows
+- **`.github/workflows/ci.yml`**: Runs on all pushes and pull requests to `main`. Tests matrix across Python `3.10`, `3.11`, `3.12`, and `3.13` on Ubuntu runners, validates linting via `ruff`, and verifies package build integrity via `twine`.
+- **`.github/workflows/publish.yml`**: Triggers on GitHub Release publication and manual `workflow_dispatch`. Uses PyPA Trusted Publishing (OIDC) with `skip-existing: true` and a dedicated build validation step before uploading to PyPI.
+

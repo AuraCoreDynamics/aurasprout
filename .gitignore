@@ -13,4 +13,6 @@ dist/
 .vscode/
 .idea/
 .env
+.python*/
+.bootstrapped_python/
 

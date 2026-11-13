@@ -16,8 +16,15 @@ from aurasprout.ui.server import ManagementServerState, SproutManagementServer
 
 
 def _load_openapi_contract() -> dict:
-    spec_path = Path(r"C:\projects\auracore\auragrid-api\openapi\aurasprout-management.openapi.json")
-    return json.loads(spec_path.read_text(encoding="utf-8"))
+    candidates = [
+        Path(__file__).resolve().parent.parent / "src" / "aurasprout" / "openapi.json",
+        Path(__file__).resolve().parent.parent / "openapi.json",
+        Path(r"C:\projects\auracore\auragrid-api\openapi\aurasprout-management.openapi.json"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    raise FileNotFoundError(f"OpenAPI contract not found in candidates: {candidates}")
 
 
 def test_management_server_auth_csrf_origin_and_openapi_routes(tmp_path: Path) -> None:
