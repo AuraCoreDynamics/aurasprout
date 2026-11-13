@@ -439,18 +439,19 @@ def install_standalone(
     if register_os:
         if is_win:
             import winreg
+            from aurasprout import __version__ as _aurasprout_version
 
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, registry_root_key) as rk:
                 winreg.SetValueEx(rk, "InstallPath", 0, winreg.REG_SZ, str(target_dir))
                 winreg.SetValueEx(rk, "UserRoot", 0, winreg.REG_SZ, str(resolved_user_root))
                 winreg.SetValueEx(rk, "PythonExecutable", 0, winreg.REG_SZ, str(venv_py))
                 winreg.SetValueEx(rk, "BinDir", 0, winreg.REG_SZ, str(bin_dir))
-                winreg.SetValueEx(rk, "Version", 0, winreg.REG_SZ, "0.1.0")
+                winreg.SetValueEx(rk, "Version", 0, winreg.REG_SZ, _aurasprout_version)
             registered_keys.append(f"HKCU\\{registry_root_key}")
 
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, uninstall_reg_key) as uk:
                 winreg.SetValueEx(uk, "DisplayName", 0, winreg.REG_SZ, "AuraSprout (User)")
-                winreg.SetValueEx(uk, "DisplayVersion", 0, winreg.REG_SZ, "0.1.0")
+                winreg.SetValueEx(uk, "DisplayVersion", 0, winreg.REG_SZ, _aurasprout_version)
                 winreg.SetValueEx(uk, "Publisher", 0, winreg.REG_SZ, "AuraCore Dynamics")
                 winreg.SetValueEx(uk, "InstallLocation", 0, winreg.REG_SZ, str(target_dir))
                 winreg.SetValueEx(
