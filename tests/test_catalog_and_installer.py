@@ -273,7 +273,12 @@ def test_offline_wheelhouse_installation_and_cli_smoke(
 
 
 def test_desktop_hub_composes_auraseed_mvenv_panel(tmp_path: Path) -> None:
-    import tkinter as tk
+    try:
+        import tkinter as tk
+    except (ImportError, ModuleNotFoundError) as exc:
+        pytest.skip(f"Tkinter unavailable in test environment: {exc}")
+        return
+
     from aurasprout.ui.desktop import SproutDesktopHub
 
     paths = SproutPaths(cell_root=tmp_path / "cell", user_root=tmp_path / "user")

@@ -102,6 +102,19 @@ def register_catalog_and_install_commands(subparsers: argparse._SubParsersAction
     p_cdel.add_argument("--catalog-dir", default=None, help="Target catalog root directory")
     p_cdel.add_argument("--json", action="store_true", help="Emit JSON output")
 
+    # catalog sync / deploy
+    p_csync = cat_sub.add_parser("sync", help="Deploy/synchronize a catalog to a remote server via SFTP (e.g. DreamHost, Linux host)")
+    p_csync.add_argument("local_catalog", help="Local catalog directory containing catalog.json, index.html, apps/")
+    p_csync.add_argument("--host", default=None, help="Remote SFTP hostname or IP (defaults to value in creds file)")
+    p_csync.add_argument("--remote-dir", required=True, help="Remote web directory (e.g. auracoredynamics.com/aurasprout/catalog)")
+    p_csync.add_argument("--creds-file", default=None, help="Path to credentials file (e.g. username: foo, password: bar)")
+    p_csync.add_argument("--username", default=None, help="SFTP username")
+    p_csync.add_argument("--password", default=None, help="SFTP password")
+    p_csync.add_argument("--key-file", default=None, help="Optional SSH private key path")
+    p_csync.add_argument("--port", type=int, default=22, help="SFTP SSH port (default: 22)")
+    p_csync.add_argument("--base-url", default=None, help="Public catalog URL (e.g. https://auracoredynamics.com/aurasprout/catalog)")
+    p_csync.add_argument("--json", action="store_true", help="Emit JSON output")
+
 
 def handle_catalog_and_install_command(args: argparse.Namespace, paths: SproutPaths) -> Optional[int]:
     cmd = args.command
@@ -301,5 +314,39 @@ def handle_catalog_and_install_command(args: argparse.Namespace, paths: SproutPa
             else:
                 print(f"Deleted {args.app_id} from catalog: {deleted}")
             return 0 if deleted else 1
+
+        if args.catalog_cmd == "sync":
+            from aurasprout.catalog.remote_sync import SftpCatalogDeployer
+            if args.creds_file:
+                deployer = SftpCatalogDeployer.from_credentials_file(
+                    creds_file=args.creds_file,
+                    default_host=args.host,
+                    default_port=args.port,
+                )
+            else:
+                if not args.host or not args.username:
+                    raise ValueError("Must provide either --creds-file or both --host and --username")
+                deployer = SftpCatalogDeployer(
+                    host=args.host,
+                    username=args.username,
+                    password=args.password,
+                    key_filename=args.key_file,
+                    port=args.port,
+                )
+            res = deployer.sync_catalog(
+                local_catalog_dir=args.local_catalog,
+                remote_catalog_dir=args.remote_dir,
+                catalog_base_url=args.base_url,
+            )
+            if getattr(args, "json", False):
+                print(json.dumps(res.to_dict(), indent=2))
+            else:
+                print(
+                    f"Successfully synchronized {res.file_count if hasattr(res, 'file_count') else len(res.uploaded_files)} "
+                    f"files ({res.total_bytes_transferred} bytes) to {res.host}:{res.remote_dir}"
+                )
+                if res.catalog_url:
+                    print(f"Catalog URL: {res.catalog_url}")
+            return 0
 
     return None
