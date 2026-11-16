@@ -11,9 +11,13 @@ Zero-privilege, user-space application distribution, local supervision, and shar
 
 ## Quick Start
 
-Both `aurasprout` (installed console script / standalone launcher) and `python -m aurasprout` expose the full CLI (supporting global `--cell-root` and `--user-root` flags):
+Both `aurasprout` (installed console script / standalone launcher), the zero-config root bootstrappers (`./aurasprout.ps1` on Windows, `./aurasprout.sh` on Linux/macOS), and `python -m aurasprout` expose the full CLI (supporting global `--cell-root` and `--user-root` flags):
 
 ```powershell
+# Zero-configuration cleanroom install from source checkout (no PYTHONPATH needed)
+.\aurasprout.ps1 self-install --add-to-path --shortcut --json
+# (POSIX: ./aurasprout.sh self-install --add-to-path --shortcut --json)
+
 # Install AuraSprout standalone into %LOCALAPPDATA%\AuraSprout\standalone
 python -m aurasprout self-install --add-to-path --shortcut --json
 

@@ -340,3 +340,30 @@ def test_desktop_hub_composes_auraseed_mvenv_panel(tmp_path: Path) -> None:
         del root
         gc.collect()
 
+
+def test_install_and_uninstall_registers_and_removes_skills(tmp_path: Path) -> None:
+    paths = SproutPaths(cell_root=tmp_path / "cell", user_root=tmp_path / "user")
+    mvenv_mgr = MvenvManager(tmp_path / "mvenvs")
+    mvenv_mgr.create_venv(MvenvCreateRequest(name="sprout-skill-app", base_python=sys.executable, sovereign=False))
+
+    app_src = _make_sample_app(tmp_path / "skill_app_src", app_id="skill-app", version="1.0.0")
+    skill_dir = app_src / "skills" / "skill-app"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: skill-app\ndescription: Test skill\n---\n# Skill App\n", encoding="utf-8")
+
+    manifest_data = json.loads((app_src / "app.manifest.json").read_text(encoding="utf-8"))
+    manifest_data["distribution"]["skills"] = ["skills/skill-app"]
+    (app_src / "app.manifest.json").write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+    skills_dest = tmp_path / "user_agents" / "skills"
+    engine = SproutInstallerEngine(paths=paths, mvenv_manager=mvenv_mgr)
+    rec = engine.install_from_directory(app_src, sovereign=False, skills_dir=skills_dest)
+
+    registered_skill_md = skills_dest / "skill-app" / "SKILL.md"
+    assert registered_skill_md.exists()
+    assert str(skills_dest / "skill-app") in rec.registered_skills
+
+    assert engine.uninstall_app("skill-app", remove_mvenv=True) is True
+    assert not (skills_dest / "skill-app").exists()
+
+

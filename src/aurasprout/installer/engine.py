@@ -328,6 +328,7 @@ class SproutInstallerEngine:
         channel: str = "stable",
         sovereign: bool = True,
         desktop_dir: Optional[Path] = None,
+        skills_dir: Optional[Path] = None,
     ) -> InstalledAppRecord:
         payload_root = Path(source_dir).resolve()
         if not payload_root.exists():
@@ -545,6 +546,42 @@ class SproutInstallerEngine:
             for svc in manifest.services
         ]
 
+        registered_skills: List[str] = []
+        if manifest.distribution.skills:
+            skills_root = (
+                Path(skills_dir).resolve()
+                if skills_dir is not None
+                else (Path.home() / ".agents" / "skills").resolve()
+            )
+            skills_root.mkdir(parents=True, exist_ok=True)
+            for rel_skill in manifest.distribution.skills:
+                resolved_skill: Optional[Path] = None
+                for base_dir in (src_copy_target, version_dir):
+                    try:
+                        cand = validate_within_root(base_dir, rel_skill)
+                    except ValueError:
+                        continue
+                    if cand.exists():
+                        resolved_skill = cand
+                        break
+                if resolved_skill is None:
+                    continue
+                if resolved_skill.is_dir():
+                    skill_name = validate_identifier(resolved_skill.name, "skillName")
+                    dest_skill = validate_within_root(skills_root, skill_name)
+                    shutil.copytree(resolved_skill, dest_skill, dirs_exist_ok=True)
+                    registered_skills.append(str(dest_skill))
+                elif resolved_skill.is_file():
+                    parent_name = resolved_skill.parent.name
+                    skill_name = validate_identifier(
+                        parent_name if parent_name not in ("", "skills") else app_id,
+                        "skillName",
+                    )
+                    dest_skill = validate_within_root(skills_root, skill_name)
+                    dest_skill.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(resolved_skill, dest_skill / resolved_skill.name)
+                    registered_skills.append(str(dest_skill))
+
         record = InstalledAppRecord(
             app_id=app_id,
             name=manifest.name,
@@ -557,6 +594,7 @@ class SproutInstallerEngine:
             port=assigned_port,
             services=service_states,
             launchers=launchers,
+            registered_skills=registered_skills,
             previous_versions=prev_versions,
         )
         self.registry.register(record)
@@ -575,6 +613,7 @@ class SproutInstallerEngine:
         channel: str = "stable",
         sovereign: bool = True,
         desktop_dir: Optional[Path] = None,
+        skills_dir: Optional[Path] = None,
     ) -> InstalledAppRecord:
         pkg = Path(package_path).resolve()
         if not pkg.exists():
@@ -597,6 +636,7 @@ class SproutInstallerEngine:
                 channel=channel,
                 sovereign=sovereign,
                 desktop_dir=desktop_dir,
+                skills_dir=skills_dir,
             )
         finally:
             shutil.rmtree(staging, ignore_errors=True)
@@ -713,6 +753,14 @@ class SproutInstallerEngine:
                 refresh_os_shell_cache(sm_path.parent)
 
         configure_user_autostart(safe_id, [], enabled=False)
+
+        for skill_path_str in record.registered_skills:
+            skill_path = Path(skill_path_str)
+            if skill_path.exists():
+                if skill_path.is_dir():
+                    shutil.rmtree(skill_path, ignore_errors=True)
+                else:
+                    skill_path.unlink(missing_ok=True)
 
         install_root = Path(record.install_path)
         if install_root.exists():

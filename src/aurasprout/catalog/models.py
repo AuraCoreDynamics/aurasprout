@@ -220,6 +220,7 @@ class DistributionConfig:
     pip_install_args: List[str] = field(default_factory=list)
     post_install_commands: List[str] = field(default_factory=list)
     artifacts: List[str] = field(default_factory=list)
+    skills: List[str] = field(default_factory=list)
     hooks: Dict[str, str] = field(default_factory=dict)
     entrypoint_command: str = ""
     default_port: Optional[int] = None
@@ -240,6 +241,7 @@ class DistributionConfig:
             pip_install_args=list(data.get("pipInstallArgs") or data.get("pip_install_args") or []),
             post_install_commands=list(data.get("postInstallCommands") or data.get("post_install_commands") or []),
             artifacts=list(data.get("artifacts") or []),
+            skills=list(data.get("skills") or []),
             hooks={str(k): str(v) for k, v in (data.get("hooks") or {}).items()},
             entrypoint_command=str(data.get("entrypointCommand") or data.get("entrypoint_command") or ""),
             default_port=data.get("defaultPort") if data.get("defaultPort") is not None else data.get("default_port"),
@@ -267,6 +269,8 @@ class DistributionConfig:
             payload["postInstallCommands"] = list(self.post_install_commands)
         if self.artifacts:
             payload["artifacts"] = list(self.artifacts)
+        if self.skills:
+            payload["skills"] = list(self.skills)
         if self.hooks:
             payload["hooks"] = dict(self.hooks)
         if self.entrypoint_command:

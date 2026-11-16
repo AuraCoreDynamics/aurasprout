@@ -60,6 +60,7 @@ class InstalledAppRecord:
     port: int = 8000
     services: List[InstalledServiceState] = field(default_factory=list)
     launchers: Dict[str, str] = field(default_factory=dict)
+    registered_skills: List[str] = field(default_factory=list)
     previous_versions: List[str] = field(default_factory=list)
     installed_at: str = field(default_factory=_now_utc_iso)
     updated_at: str = field(default_factory=_now_utc_iso)
@@ -78,6 +79,7 @@ class InstalledAppRecord:
             port=int(data.get("port") or 8000),
             services=[InstalledServiceState.from_dict(s) for s in (data.get("services") or [])],
             launchers=dict(data.get("launchers") or {}),
+            registered_skills=list(data.get("registeredSkills") or data.get("registered_skills") or []),
             previous_versions=list(data.get("previousVersions") or []),
             installed_at=str(data.get("installedAt") or data.get("installed_at") or _now_utc_iso()),
             updated_at=str(data.get("updatedAt") or data.get("updated_at") or _now_utc_iso()),
@@ -102,6 +104,7 @@ class InstalledAppRecord:
             "pythonPath": self.python_path,
             "port": self.port,
             "launchers": dict(self.launchers),
+            "registeredSkills": list(self.registered_skills),
             "previousVersions": list(self.previous_versions),
             "installedAt": self.installed_at,
             "updatedAt": self.updated_at,

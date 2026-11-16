@@ -37,6 +37,7 @@
   "distribution": {
     "channels": ["stable"],
     "artifacts": ["assets/*.ico", "assets/*.png"],
+    "skills": ["skills/aurasprout"],
     "entrypointCommand": "-m aurasprout desktop",
     "defaultPort": 8770,
     "createDesktopShortcut": true,
