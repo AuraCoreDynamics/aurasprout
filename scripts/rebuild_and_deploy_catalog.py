@@ -10,7 +10,7 @@ from pathlib import Path
 from jsonschema import validate
 
 from aurasprout.catalog.manager import SproutCatalogManager
-from aurasprout.catalog.remote_sync import SftpCatalogDeployer, parse_credentials_file
+from aurasprout.catalog.remote_sync import SftpCatalogDeployer
 from aurasprout.installer.bundle import build_native_installer_zip
 
 

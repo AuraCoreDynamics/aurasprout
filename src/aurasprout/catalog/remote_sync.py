@@ -5,7 +5,6 @@ Supports SFTP deployment (e.g. DreamHost, generic Linux hosting) and static cata
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -13,7 +12,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from aurasprout.catalog.manager import SproutCatalogManager
-from aurasprout.catalog.models import AppVersionEntry
 from aurasprout.contracts.paths import SproutPaths
 
 _LOG = logging.getLogger(__name__)

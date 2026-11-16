@@ -12,12 +12,10 @@ Produces ready-to-run zero-privilege installer archives for Windows (and Unix):
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Union
 
 from aurasprout.catalog.crypto import compute_sha256
 
