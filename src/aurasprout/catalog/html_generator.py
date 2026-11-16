@@ -62,6 +62,11 @@ def generate_catalog_html(manifest: CatalogManifest, catalog_url: Optional[str] 
               <span class="checksum-hash">{sha_short}</span>
               <button class="copy-btn" type="button" onclick="copyText('{sha_str}', this)">Copy</button>
             </div>
+            {f'''<div style="margin: 0.4rem 0;">
+              <a href="{catalog_url.rstrip('/') if catalog_url else '.'}/installers/aurasprout-{v_str}-installer.zip" class="btn-native-installer" download>
+                &#11015; Download Native Installer (.zip)
+              </a>
+            </div>''' if app.app_id == 'aurasprout' else ''}
             <div class="buttons-row">
               <button class="btn-install" type="button" onclick="openInstallModal('{app_id_esc}', '{v_str}')">
                 Install CLI Command
@@ -118,6 +123,24 @@ def generate_catalog_html(manifest: CatalogManifest, catalog_url: Optional[str] 
     .checksum-bar {{ font-size: 0.75rem; color: var(--muted); display: flex; align-items: center; justify-content: space-between; margin: 0.4rem 0; }}
     .copy-btn {{ background: #21262d; color: var(--text); border: 1px solid var(--card-border); border-radius: 5px; padding: 0.15rem 0.45rem; cursor: pointer; }}
     .buttons-row {{ display: flex; gap: 0.5rem; }}
+    .btn-native-installer {{
+      display: block;
+      background: linear-gradient(135deg, rgba(88, 166, 255, 0.15) 0%, rgba(35, 134, 54, 0.2) 100%);
+      border: 1px solid #58a6ff;
+      color: #58a6ff;
+      text-decoration: none;
+      text-align: center;
+      padding: 0.45rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }}
+    .btn-native-installer:hover {{
+      background: rgba(88, 166, 255, 0.25);
+      box-shadow: 0 0 12px rgba(88, 166, 255, 0.3);
+      color: #ffffff;
+    }}
     .btn-install {{ flex: 1; background: var(--green); color: #fff; border: none; border-radius: 6px; padding: 0.45rem; cursor: pointer; font-weight: 600; }}
     .btn-download {{ background: #21262d; color: var(--text); border: 1px solid var(--card-border); border-radius: 6px; padding: 0.45rem 0.75rem; text-decoration: none; font-size: 0.85rem; }}
     .modal {{ position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); display: none; align-items: center; justify-content: center; }}
