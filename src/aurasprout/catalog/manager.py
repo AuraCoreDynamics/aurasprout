@@ -218,6 +218,8 @@ class SproutCatalogManager:
                 tags=combined_tags,
                 is_latest=is_latest,
                 name=manifest.name,
+                website_url=manifest.website_url,
+                repository_url=manifest.repository_url,
             )
             self.save()
             return version_entry

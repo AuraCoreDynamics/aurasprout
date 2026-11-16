@@ -321,3 +321,4 @@ def build_native_installer_zip(
         return zip_path
     finally:
         shutil.rmtree(stage_dir, ignore_errors=True)
+

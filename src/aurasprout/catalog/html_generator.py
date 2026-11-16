@@ -37,6 +37,19 @@ def generate_catalog_html(manifest: CatalogManifest, catalog_url: Optional[str] 
             for ver_k, ver_obj in sorted(app.versions.items(), reverse=True)
         )
 
+        ext_links = []
+        if app.website_url:
+            w_esc = html.escape(app.website_url)
+            ext_links.append(
+                f'<a href="{w_esc}" target="_blank" rel="noopener noreferrer" class="ext-link" title="Website">&#127760; Website</a>'
+            )
+        if app.repository_url:
+            r_esc = html.escape(app.repository_url)
+            ext_links.append(
+                f'<a href="{r_esc}" target="_blank" rel="noopener noreferrer" class="ext-link" title="Source / Git Repository">&#128187; Source</a>'
+            )
+        ext_links_html = f'<div class="ext-links">{" ".join(ext_links)}</div>' if ext_links else ""
+
         cards_html.append(
             f"""
         <div class="app-card" data-app-id="{app_id_esc}" data-channel="{ch_str}">
@@ -54,6 +67,7 @@ def generate_catalog_html(manifest: CatalogManifest, catalog_url: Optional[str] 
             </div>
             <p class="app-desc">{desc_esc}</p>
             <div class="tags-list">{tags_html}</div>
+            {ext_links_html}
           </div>
           <div class="card-actions">
             <select class="ver-select" aria-label="Available versions">{ver_options}</select>
@@ -120,6 +134,26 @@ def generate_catalog_html(manifest: CatalogManifest, catalog_url: Optional[str] 
     .version-badge, .channel-badge, .pill {{ background: #21262d; padding: 0.1rem 0.45rem; border-radius: 6px; font-size: 0.75rem; }}
     .app-desc {{ color: var(--muted); font-size: 0.88rem; margin-top: 0.6rem; }}
     .tags-list {{ display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.5rem; }}
+    .ext-links {{ display: flex; gap: 0.5rem; margin-top: 0.55rem; flex-wrap: wrap; }}
+    .ext-link {{
+      font-size: 0.78rem;
+      color: var(--accent);
+      text-decoration: none;
+      background: rgba(88, 166, 255, 0.1);
+      border: 1px solid rgba(88, 166, 255, 0.25);
+      border-radius: 4px;
+      padding: 0.15rem 0.45rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }}
+    .ext-link:hover {{
+      background: rgba(88, 166, 255, 0.22);
+      border-color: var(--accent);
+      color: #ffffff;
+      text-decoration: none;
+    }}
     .checksum-bar {{ font-size: 0.75rem; color: var(--muted); display: flex; align-items: center; justify-content: space-between; margin: 0.4rem 0; }}
     .copy-btn {{ background: #21262d; color: var(--text); border: 1px solid var(--card-border); border-radius: 5px; padding: 0.15rem 0.45rem; cursor: pointer; }}
     .buttons-row {{ display: flex; gap: 0.5rem; }}

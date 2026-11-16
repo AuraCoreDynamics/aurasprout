@@ -297,6 +297,8 @@ class AppManifest:
     provides_contracts: List[Dict[str, str]] = field(default_factory=list)
     dependencies: List[Dict[str, str]] = field(default_factory=list)
     distribution: DistributionConfig = field(default_factory=DistributionConfig)
+    website_url: Optional[str] = None
+    repository_url: Optional[str] = None
     schema_uri: Optional[str] = None
     manifest_dir: Optional[Path] = None
 
@@ -325,6 +327,8 @@ class AppManifest:
             provides_contracts=list(data.get("providesContracts") or []),
             dependencies=list(data.get("dependencies") or []),
             distribution=dist,
+            website_url=data.get("websiteUrl") or data.get("website_url"),
+            repository_url=data.get("repositoryUrl") or data.get("repository_url"),
             schema_uri=data.get("$schema"),
         )
 
@@ -353,6 +357,10 @@ class AppManifest:
             payload["$schema"] = self.schema_uri
         if self.description:
             payload["description"] = self.description
+        if self.website_url is not None:
+            payload["websiteUrl"] = self.website_url
+        if self.repository_url is not None:
+            payload["repositoryUrl"] = self.repository_url
         if self.installer is not None:
             payload["installer"] = self.installer.to_dict()
         if self.startup is not None:
@@ -470,6 +478,8 @@ class CatalogAppEntry:
     manifest_uri: Optional[str] = None
     is_default: bool = False
     tags: List[str] = field(default_factory=list)
+    website_url: Optional[str] = None
+    repository_url: Optional[str] = None
     versions: Dict[str, AppVersionEntry] = field(default_factory=dict)
     created_at: str = field(default_factory=now_utc_iso)
     updated_at: str = field(default_factory=now_utc_iso)
@@ -514,6 +524,8 @@ class CatalogAppEntry:
             manifest_uri=data.get("manifestUri") or data.get("manifest_uri"),
             is_default=bool(data.get("isDefault", False)),
             tags=list(data.get("tags") or []),
+            website_url=data.get("websiteUrl") or data.get("website_url"),
+            repository_url=data.get("repositoryUrl") or data.get("repository_url"),
             versions=versions,
             created_at=str(data.get("createdAt") or data.get("created_at") or now_utc_iso()),
             updated_at=str(data.get("updatedAt") or data.get("updated_at") or now_utc_iso()),
@@ -534,6 +546,10 @@ class CatalogAppEntry:
         }
         if self.description:
             payload["description"] = self.description
+        if self.website_url is not None:
+            payload["websiteUrl"] = self.website_url
+        if self.repository_url is not None:
+            payload["repositoryUrl"] = self.repository_url
         if self.manifest_uri is not None:
             payload["manifestUri"] = self.manifest_uri
         if self.tags:
@@ -568,6 +584,8 @@ class CatalogManifest:
         tags: Optional[List[str]] = None,
         is_latest: bool = True,
         name: Optional[str] = None,
+        website_url: Optional[str] = None,
+        repository_url: Optional[str] = None,
     ) -> CatalogAppEntry:
         self.updated_at = now_utc_iso()
         app = self.apps.get(app_id)
@@ -580,6 +598,8 @@ class CatalogManifest:
                 latest_version=version_entry.version,
                 channel=version_entry.channel,
                 tags=list(tags or []),
+                website_url=website_url,
+                repository_url=repository_url,
             )
             self.apps[app_id] = app
         else:
@@ -589,6 +609,10 @@ class CatalogManifest:
                 app.description = description
             if tags:
                 app.tags = list(dict.fromkeys([*app.tags, *tags]))
+            if website_url:
+                app.website_url = website_url
+            if repository_url:
+                app.repository_url = repository_url
 
         app.add_version(version_entry, is_latest=is_latest)
         return app
