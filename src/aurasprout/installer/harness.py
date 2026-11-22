@@ -21,7 +21,6 @@ def get_detected_harness_roots() -> List[Tuple[str, Path]]:
     """
     home = Path.home()
     candidates = [
-        ("agents", home / ".agents" / "skills"),
         ("claude", home / ".claude" / "skills"),
         ("gemini_antigravity", home / ".gemini" / "antigravity" / "skills"),
         ("opencode", home / ".opencode" / "skills"),
@@ -30,8 +29,8 @@ def get_detected_harness_roots() -> List[Tuple[str, Path]]:
     detected: List[Tuple[str, Path]] = []
     for name, skills_dir in candidates:
         parent = skills_dir.parent
-        # Detected if parent harness configuration dir exists, skills dir exists, or base agents
-        if parent.exists() or skills_dir.exists() or name == "agents":
+        # Detected if parent harness configuration dir exists or skills dir exists
+        if parent.exists() or skills_dir.exists():
             detected.append((name, skills_dir))
     return detected
 
@@ -60,7 +59,21 @@ def link_skill_to_harnesses(skill_source_dir: Path) -> List[Path]:
         harness_root.mkdir(parents=True, exist_ok=True)
 
         if target_dir.exists():
-            continue
+            if hasattr(target_dir, "is_junction") and target_dir.is_junction():
+                try:
+                    if os.readlink(target_dir) == str(skill_source_dir.resolve()):
+                        linked_paths.append(target_dir)
+                        continue
+                    os.rmdir(target_dir)
+                except OSError:
+                    pass
+            elif target_dir.is_symlink():
+                try:
+                    target_dir.unlink()
+                except OSError:
+                    pass
+            else:
+                continue
 
         linked = False
         if os.name == "nt":

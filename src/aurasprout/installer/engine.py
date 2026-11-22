@@ -568,6 +568,17 @@ class SproutInstallerEngine:
                     continue
                 if resolved_skill.is_dir():
                     skill_name = validate_identifier(resolved_skill.name, "skillName")
+                    cand_dest = skills_root / skill_name
+                    if hasattr(cand_dest, "is_junction") and cand_dest.is_junction():
+                        try:
+                            os.rmdir(cand_dest)
+                        except OSError:
+                            pass
+                    elif cand_dest.is_symlink():
+                        try:
+                            cand_dest.unlink()
+                        except OSError:
+                            pass
                     dest_skill = validate_within_root(skills_root, skill_name)
                     shutil.copytree(resolved_skill, dest_skill, dirs_exist_ok=True)
                     registered_skills.append(str(dest_skill))
