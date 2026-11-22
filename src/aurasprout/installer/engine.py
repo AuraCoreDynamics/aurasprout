@@ -571,6 +571,12 @@ class SproutInstallerEngine:
                     dest_skill = validate_within_root(skills_root, skill_name)
                     shutil.copytree(resolved_skill, dest_skill, dirs_exist_ok=True)
                     registered_skills.append(str(dest_skill))
+                    try:
+                        from aurasprout.installer.harness import link_skill_to_harnesses
+                        for hl in link_skill_to_harnesses(dest_skill):
+                            registered_skills.append(str(hl))
+                    except (ImportError, OSError):
+                        pass
                 elif resolved_skill.is_file():
                     parent_name = resolved_skill.parent.name
                     skill_name = validate_identifier(
@@ -581,6 +587,12 @@ class SproutInstallerEngine:
                     dest_skill.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(resolved_skill, dest_skill / resolved_skill.name)
                     registered_skills.append(str(dest_skill))
+                    try:
+                        from aurasprout.installer.harness import link_skill_to_harnesses
+                        for hl in link_skill_to_harnesses(dest_skill):
+                            registered_skills.append(str(hl))
+                    except (ImportError, OSError):
+                        pass
 
         record = InstalledAppRecord(
             app_id=app_id,
