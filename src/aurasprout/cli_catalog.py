@@ -39,6 +39,20 @@ def register_catalog_and_install_commands(subparsers: argparse._SubParsersAction
     p_inst.add_argument("--port", type=int, default=None, help="Override default service port")
     p_inst.add_argument("--json", action="store_true", help="Emit JSON output")
 
+    # attach
+    p_att = subparsers.add_parser("attach", help="Attach a local workspace directory directly to AuraSprout for live dev")
+    p_att.add_argument("workspace", help="Path to workspace directory containing app.manifest.json")
+    p_att.add_argument("--app-id", default=None, help="Override application ID")
+    p_att.add_argument("--mvenv", default=None, help="Explicit AuraSeed managed venv name")
+    p_att.add_argument("--shortcut", action="store_true", help="Create user desktop shortcut")
+    p_att.add_argument("--port", type=int, default=None, help="Override default service port")
+    p_att.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    # detach
+    p_det = subparsers.add_parser("detach", help="Detach an attached workspace app, reverting to extracted package")
+    p_det.add_argument("app_id", help="Attached application ID")
+    p_det.add_argument("--json", action="store_true", help="Emit JSON output")
+
     # uninstall
     p_uninst = subparsers.add_parser("uninstall", help="Uninstall a locally installed application")
     p_uninst.add_argument("app_id", help="Installed application ID")
@@ -186,6 +200,31 @@ def handle_catalog_and_install_command(args: argparse.Namespace, paths: SproutPa
             print(json.dumps(rec.to_dict(), indent=2))
         else:
             print(f"Installed {rec.app_id}@{rec.version} -> {rec.install_path}")
+        return 0
+
+    if cmd == "attach":
+        engine = SproutInstallerEngine(paths=paths)
+        rec = engine.attach_workspace(
+            workspace_dir=Path(args.workspace),
+            app_id=args.app_id,
+            mvenv_name=args.mvenv,
+            create_shortcut=args.shortcut,
+            port=args.port,
+        )
+        if args.json:
+            print(json.dumps(rec.to_dict(), indent=2))
+        else:
+            repo_info = f" [repo: {rec.repository_url}]" if rec.repository_url else ""
+            print(f"Attached {rec.app_id}@{rec.version} (workspace: {rec.source_path}){repo_info} -> {rec.install_path}")
+        return 0
+
+    if cmd == "detach":
+        engine = SproutInstallerEngine(paths=paths)
+        rec = engine.detach_workspace(args.app_id)
+        if args.json:
+            print(json.dumps(rec.to_dict(), indent=2))
+        else:
+            print(f"Detached {rec.app_id} (active mode: {rec.attached_mode})")
         return 0
 
     if cmd == "uninstall":

@@ -64,6 +64,9 @@ class InstalledAppRecord:
     previous_versions: List[str] = field(default_factory=list)
     installed_at: str = field(default_factory=_now_utc_iso)
     updated_at: str = field(default_factory=_now_utc_iso)
+    repository_url: Optional[str] = None
+    attached_mode: str = "extracted"
+    source_path: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "InstalledAppRecord":
@@ -83,11 +86,14 @@ class InstalledAppRecord:
             previous_versions=list(data.get("previousVersions") or []),
             installed_at=str(data.get("installedAt") or data.get("installed_at") or _now_utc_iso()),
             updated_at=str(data.get("updatedAt") or data.get("updated_at") or _now_utc_iso()),
+            repository_url=data.get("repositoryUrl") or data.get("repository_url"),
+            attached_mode=str(data.get("attachedMode") or data.get("attached_mode") or "extracted"),
+            source_path=data.get("sourcePath") or data.get("source_path"),
         )
 
     def to_summary_dict(self) -> Dict[str, Any]:
         """Serialize strictly matching `aurasprout-management.openapi.json#/components/schemas/InstalledAppSummary`."""
-        return {
+        d = {
             "appId": self.app_id,
             "name": self.name,
             "version": self.version,
@@ -96,9 +102,16 @@ class InstalledAppRecord:
             "channel": self.channel,
             "services": [s.to_dict() for s in self.services],
         }
+        if self.repository_url:
+            d["repositoryUrl"] = self.repository_url
+        if self.attached_mode != "extracted":
+            d["attachedMode"] = self.attached_mode
+        if self.source_path:
+            d["sourcePath"] = self.source_path
+        return d
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d = {
             **self.to_summary_dict(),
             "mvenvPath": self.mvenv_path,
             "pythonPath": self.python_path,
@@ -109,6 +122,12 @@ class InstalledAppRecord:
             "installedAt": self.installed_at,
             "updatedAt": self.updated_at,
         }
+        if self.repository_url:
+            d["repositoryUrl"] = self.repository_url
+        d["attachedMode"] = self.attached_mode
+        if self.source_path:
+            d["sourcePath"] = self.source_path
+        return d
 
 
 class InstalledAppsRegistry:
@@ -180,18 +199,39 @@ class InstalledAppsRegistry:
         app_id: str,
         version: str,
         previous_versions: Optional[List[str]] = None,
+        attached_mode: Optional[str] = None,
+        source_path: Optional[str] = None,
+        repository_url: Optional[str] = None,
     ) -> Path:
         """Write `active_version.json` pointer (non-admin Windows & POSIX safe)."""
         root = Path(install_dir).resolve()
         ptr_file = root / "active_version.json"
+        existing_data: Dict[str, Any] = {}
+        if ptr_file.exists():
+            try:
+                existing_data = json.loads(ptr_file.read_text(encoding="utf-8"))
+            except Exception:
+                existing_data = {}
+
+        mode = attached_mode or existing_data.get("attachedMode") or "extracted"
+        src = source_path or existing_data.get("sourcePath")
+        repo = repository_url or existing_data.get("repositoryUrl")
+
         payload = {
             "appId": app_id,
             "activeVersion": version,
             "versionDir": str(validate_within_root(root, Path("versions") / validate_identifier(version, "version"))),
             "appDataDir": str(validate_within_root(root, "app_data")),
+            "activeDir": str(root / "active"),
             "previousVersions": list(previous_versions or []),
+            "attachedMode": mode,
             "updatedAt": _now_utc_iso(),
         }
+        if src:
+            payload["sourcePath"] = str(src)
+        if repo:
+            payload["repositoryUrl"] = str(repo)
+
         tmp = ptr_file.with_name(f"{ptr_file.name}.tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(tmp, ptr_file)

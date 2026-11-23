@@ -102,6 +102,63 @@ class SproutInstallerEngine:
                 modules.append(mod)
         return modules or ["setuptools"]
 
+    @staticmethod
+    def _create_active_junction(active_link: Path, target_dir: Path) -> bool:
+        """Create an active NTFS junction or symlink pointing to target_dir."""
+        active_link = Path(active_link)
+        target_dir = Path(target_dir).resolve()
+        if not target_dir.exists():
+            return False
+
+        if active_link.exists() or os.path.islink(active_link):
+            try:
+                if os.name == "nt":
+                    try:
+                        os.rmdir(active_link)
+                    except OSError:
+                        active_link.unlink(missing_ok=True)
+                else:
+                    active_link.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(active_link), str(target_dir)],
+                capture_output=True,
+                check=False,
+            )
+            if active_link.exists():
+                return True
+
+        try:
+            active_link.symlink_to(target_dir, target_is_directory=True)
+            return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _ensure_git_tracking(target_dir: Path, repo_url: Optional[str] = None) -> None:
+        """Initialize git repo and configure remote origin if not already a git repository."""
+        target_dir = Path(target_dir).resolve()
+        if not target_dir.exists():
+            return
+        git_dir = target_dir / ".git"
+        if not git_dir.exists():
+            try:
+                subprocess.run(["git", "init"], cwd=str(target_dir), capture_output=True, check=False)
+            except OSError:
+                pass
+        if repo_url and git_dir.exists():
+            try:
+                res = subprocess.run(["git", "remote"], cwd=str(target_dir), capture_output=True, text=True, check=False)
+                if "origin" not in res.stdout.split():
+                    subprocess.run(["git", "remote", "add", "origin", str(repo_url)], cwd=str(target_dir), capture_output=True, check=False)
+                else:
+                    subprocess.run(["git", "remote", "set-url", "origin", str(repo_url)], cwd=str(target_dir), capture_output=True, check=False)
+            except OSError:
+                pass
+
     @classmethod
     def _can_skip_build_isolation(cls, python_exe: Path, project_dir: Path) -> bool:
         mods = cls._build_backend_modules(project_dir)
@@ -527,7 +584,14 @@ class SproutInstallerEngine:
             app_id=app_id,
             version=ver,
             previous_versions=prev_versions,
+            attached_mode="extracted",
+            source_path=str(src_copy_target),
+            repository_url=manifest.repository_url,
         )
+
+        active_link = install_root / "active"
+        self._create_active_junction(active_link, src_copy_target)
+        self._ensure_git_tracking(src_copy_target, manifest.repository_url)
 
         # Preserve prior volunteer opt-in preference when upgrading; default STRICTLY False for new installs.
         prev_vol: Dict[str, bool] = {}
@@ -619,6 +683,9 @@ class SproutInstallerEngine:
             launchers=launchers,
             registered_skills=registered_skills,
             previous_versions=prev_versions,
+            repository_url=manifest.repository_url,
+            attached_mode="extracted",
+            source_path=str(src_copy_target),
         )
         self.registry.register(record)
         return record
@@ -837,6 +904,215 @@ class SproutInstallerEngine:
             repointed.append(app_rec.app_id)
 
         return repointed
+
+    def attach_workspace(
+        self,
+        workspace_dir: Path,
+        app_id: Optional[str] = None,
+        mvenv_name: Optional[str] = None,
+        base_python: Optional[str] = None,
+        create_shortcut: bool = False,
+        port: Optional[int] = None,
+        skills_dir: Optional[Path] = None,
+    ) -> InstalledAppRecord:
+        """Attach a local source code directory/workspace directly to AuraSprout.
+        
+        Enables zero-copy, real-time live editing:
+        - Points apps/<appId>/active directly to workspace_dir via NTFS junction / symlink
+        - Binds the sovereign mvenv with `pip install -e`
+        - Live-links companion skills directly to client agent harnesses
+        - Tracks git remote origin from repositoryUrl or existing .git configuration
+        """
+        ws_root = Path(workspace_dir).resolve()
+        if not ws_root.exists() or not ws_root.is_dir():
+            raise FileNotFoundError(f"Workspace directory not found: {ws_root}")
+
+        manifest = AppManifest.from_file(ws_root)
+        resolved_app_id = validate_identifier(app_id or manifest.app_id, "appId")
+        ver = validate_identifier(manifest.version, "version")
+
+        existing_record = self.registry.get(resolved_app_id)
+        install_root = (
+            Path(existing_record.install_path).resolve()
+            if existing_record
+            else (self.paths.apps_dir / resolved_app_id).resolve()
+        )
+        install_root.mkdir(parents=True, exist_ok=True)
+        app_data_dir = install_root / "app_data"
+        app_data_dir.mkdir(parents=True, exist_ok=True)
+
+        prev_versions = list(existing_record.previous_versions) if existing_record else []
+        if existing_record and existing_record.version != ver and existing_record.version not in prev_versions:
+            prev_versions.append(existing_record.version)
+
+        # 1. Point active junction directly to ws_root
+        active_link = install_root / "active"
+        self._create_active_junction(active_link, ws_root)
+
+        # 2. Ensure git tracking and origin remote if repositoryUrl is declared
+        self._ensure_git_tracking(ws_root, manifest.repository_url)
+
+        # 3. Ensure mvenv
+        mvenv_rec = self._ensure_mvenv(manifest, mvenv_name, base_python, sovereign=True)
+        python_exe = Path(mvenv_rec.python_path).resolve()
+        assigned_port = int(port or (existing_record.port if existing_record else None) or manifest.distribution.default_port or 8000)
+
+        # 4. Install dependencies and source in editable mode targeting ws_root
+        self._install_dependencies_and_source(
+            manifest=manifest,
+            python_exe=python_exe,
+            payload_root=ws_root,
+            src_root=ws_root,
+            wheelhouse_dir=None,
+            editable=True,
+        )
+
+        # 5. Generate launchers
+        entrypoint_cmd = manifest.distribution.entrypoint_command or (
+            manifest.gui_entry_points[0].entry_command if manifest.gui_entry_points else f"{resolved_app_id}"
+        )
+        launchers: Dict[str, str] = {}
+        if manifest.distribution.create_launchers:
+            launchers = generate_launchers(
+                install_dir=install_root,
+                app_id=resolved_app_id,
+                python_exe=python_exe,
+                entrypoint_command=entrypoint_cmd,
+                port=assigned_port,
+                mvenv_root=Path(mvenv_rec.path),
+            )
+            primary_launcher = launchers.get("bat") or launchers.get("ps1") or launchers.get("sh")
+            sm_target = Path(launchers["pythonw"]) if (launchers.get("pythonw") and launchers.get("pyw")) else (
+                Path(primary_launcher) if primary_launcher else None
+            )
+            sm_args = f'"{launchers["pyw"]}"' if (launchers.get("pythonw") and launchers.get("pyw")) else ""
+            if sm_target is not None:
+                sm_shortcut = create_user_start_menu_shortcut(
+                    app_id=resolved_app_id,
+                    display_name=manifest.name,
+                    launcher_path=sm_target,
+                    arguments=sm_args,
+                    working_dir=app_data_dir,
+                    description=manifest.description or manifest.name,
+                    refresh_cache=True,
+                )
+                if sm_shortcut is not None:
+                    launchers["start_menu_shortcut"] = str(sm_shortcut)
+            if create_shortcut and primary_launcher:
+                desk_launcher = Path(launchers["pyw"]) if (launchers.get("pythonw") and launchers.get("pyw")) else Path(primary_launcher)
+                shortcut = create_user_desktop_shortcut(
+                    app_id=resolved_app_id,
+                    display_name=manifest.name,
+                    launcher_path=desk_launcher,
+                    pythonw_path=Path(launchers["pythonw"]) if launchers.get("pythonw") else None,
+                )
+                if shortcut is not None:
+                    launchers["desktop_shortcut"] = str(shortcut)
+
+        # 6. Live-link companion skills to harnesses
+        registered_skills: List[str] = []
+        if manifest.distribution.skills:
+            skills_root = (
+                Path(skills_dir).resolve()
+                if skills_dir is not None
+                else (Path.home() / ".agents" / "skills").resolve()
+            )
+            skills_root.mkdir(parents=True, exist_ok=True)
+            for rel_skill in manifest.distribution.skills:
+                skill_path = ws_root / rel_skill
+                if not skill_path.exists():
+                    continue
+                skill_name = validate_identifier(skill_path.name, "skillName")
+                cand_dest = skills_root / skill_name
+                self._create_active_junction(cand_dest, skill_path)
+                registered_skills.append(str(cand_dest))
+                try:
+                    from aurasprout.installer.harness import link_skill_to_harnesses
+                    for hl in link_skill_to_harnesses(cand_dest):
+                        registered_skills.append(str(hl))
+                except (ImportError, OSError):
+                    pass
+
+        # 7. Write active version pointer
+        InstalledAppsRegistry.write_active_version_pointer(
+            install_dir=install_root,
+            app_id=resolved_app_id,
+            version=ver,
+            previous_versions=prev_versions,
+            attached_mode="workspace",
+            source_path=str(ws_root),
+            repository_url=manifest.repository_url,
+        )
+
+        prev_vol: Dict[str, bool] = {}
+        if existing_record:
+            prev_vol = {s.mas_id: s.volunteer_enabled for s in existing_record.services}
+
+        service_states = [
+            InstalledServiceState(
+                mas_id=svc.mas_id,
+                mode=svc.mode,
+                runtime=svc.runtime,
+                display_name=svc.display_name,
+                volunteer_enabled=bool(prev_vol.get(svc.mas_id, False)),
+                state="Installed",
+            )
+            for svc in manifest.services
+        ]
+
+        record = InstalledAppRecord(
+            app_id=resolved_app_id,
+            name=manifest.name,
+            version=ver,
+            install_path=str(install_root),
+            mvenv_name=mvenv_rec.name,
+            mvenv_path=mvenv_rec.path,
+            python_path=str(python_exe),
+            channel="dev",
+            port=assigned_port,
+            services=service_states,
+            launchers=launchers,
+            registered_skills=registered_skills,
+            previous_versions=prev_versions,
+            repository_url=manifest.repository_url,
+            attached_mode="workspace",
+            source_path=str(ws_root),
+        )
+        self.registry.register(record)
+        return record
+
+    def detach_workspace(self, app_id: str) -> InstalledAppRecord:
+        """Detach an attached workspace app, reverting active junction to extracted version if present."""
+        safe_id = validate_identifier(app_id, "appId")
+        record = self.registry.get(safe_id)
+        if record is None:
+            raise KeyError(f"Application {safe_id!r} is not installed")
+
+        install_root = Path(record.install_path).resolve()
+        active_link = install_root / "active"
+        target_version_dir = install_root / "versions" / record.version / "src"
+
+        if target_version_dir.exists():
+            self._create_active_junction(active_link, target_version_dir)
+            mode = "extracted"
+            src_path = str(target_version_dir)
+        else:
+            mode = "detached"
+            src_path = None
+
+        InstalledAppsRegistry.write_active_version_pointer(
+            install_dir=install_root,
+            app_id=safe_id,
+            version=record.version,
+            previous_versions=record.previous_versions,
+            attached_mode=mode,
+            source_path=src_path,
+            repository_url=record.repository_url,
+        )
+        record.attached_mode = mode
+        record.source_path = src_path
+        self.registry.register(record)
+        return record
 
     def get_app_manifest(self, app_id: str) -> Optional[AppManifest]:
         """Load the canonical `app.manifest.json` for an installed app's active version, if present."""
