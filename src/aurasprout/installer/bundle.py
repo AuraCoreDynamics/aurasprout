@@ -260,7 +260,7 @@ def build_native_installer_zip(
     out_dir: Path,
     aurasprout_dir: Path,
     auraseed_dir: Path,
-    version: str = "0.1.1",
+    version: str = "0.1.2",
 ) -> Path:
     """Build a zero-privilege, ready-to-run `aurasprout-<version>-installer.zip` bundle."""
     out_dir = Path(out_dir).resolve()

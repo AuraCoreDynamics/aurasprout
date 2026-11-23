@@ -2,7 +2,7 @@
   "$schema": "https://auragrid.io/schemas/app.manifest.schema.json",
   "appId": "aurasprout",
   "name": "AuraSprout - User-Space Cell & Application Hub",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "User-space zero-privilege AuraGrid cell coordination, application catalog, installer, desktop hub, and supervision layer.",
   "websiteUrl": "https://auracoredynamics.com/aurasprout/",
   "repositoryUrl": "https://github.com/AuraCoreDynamics/aurasprout.git",

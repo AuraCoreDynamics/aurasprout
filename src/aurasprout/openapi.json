@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "AuraSprout Management HTTP API",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Tier 3 Loopback Management HTTP Server for AuraSprout application lifecycle, catalogs, coordination, and sovereign runtime supervision."
   },
   "paths": {

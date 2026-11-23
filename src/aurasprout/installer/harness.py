@@ -151,7 +151,7 @@ def link_skill_to_harnesses(skill_source_dir: Path) -> List[Path]:
         if os.name == "nt":
             # Create NTFS directory junction (zero admin privileges required)
             try:
-                res = subprocess.run(
+                subprocess.run(
                     ["cmd", "/c", "mklink", "/J", str(target_dir), str(skill_source_dir.resolve())],
                     capture_output=True,
                     check=False,
