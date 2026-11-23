@@ -46,7 +46,7 @@ class ExecutableDefinition:
         ctx = str(data.get("context", "Python"))
         if ctx not in EXECUTION_RUNTIMES:
             raise ValueError(f"Unsupported execution runtime: {ctx!r}")
-        cmd = str(data.get("entryCommand") or data.get("entry_command") or "").strip()
+        cmd = str(data.get("entryCommand") or data.get("entry_command") or data.get("path") or "").strip()
         if not cmd:
             raise ValueError("ExecutableDefinition requires non-empty entryCommand")
         return cls(
@@ -311,9 +311,18 @@ class AppManifest:
         app_id = validate_identifier(str(data.get("appId", "")), "appId")
         display_name = str(data.get("name") or app_id)
         services_raw = data.get("services")
-        if not isinstance(services_raw, list):
-            raise ValueError("app.manifest.json requires 'services' array")
-        services = [MasDefinition.from_dict(s) for s in services_raw]
+        if isinstance(services_raw, list):
+            services = [MasDefinition.from_dict(s) for s in services_raw]
+        elif isinstance(services_raw, dict):
+            # Normalize legacy/alternate dictionary format {"poller": {...}}
+            services = []
+            for mas_id, s_data in services_raw.items():
+                if isinstance(s_data, dict):
+                    services.append(MasDefinition.from_dict({"masId": mas_id, **s_data}))
+        elif services_raw is None:
+            services = []
+        else:
+            raise ValueError("app.manifest.json requires 'services' array or map")
         gui_eps = [GuiEntryPoint.from_dict(g) for g in (data.get("guiEntryPoints") or [])]
         dist_raw = data.get("distribution")
         dist = DistributionConfig.from_dict(dist_raw) if isinstance(dist_raw, dict) else DistributionConfig()
