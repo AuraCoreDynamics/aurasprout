@@ -18,6 +18,7 @@ from aurasprout.contracts.paths import validate_identifier
 RELEASE_CHANNELS = ("stable", "preview", "canary", "nightly")
 MAS_MODES = ("LocalOnly", "CellSingleton", "Distributed")
 EXECUTION_RUNTIMES = ("Python", "Container", "CSharp", "PowerShell", "Wasm")
+TRIAGE_POLICIES = ("SUPERVISED", "BOUNDED_AUTONOMOUS")
 
 
 def now_utc_iso() -> str:
@@ -285,6 +286,116 @@ class DistributionConfig:
 
 
 @dataclass
+class SloConfig:
+    """Service-level objective thresholds (`app.manifest.schema.json#/definitions/sloConfig`)."""
+
+    max_startup_ms: Optional[float] = None
+    max_endpoint_latency_ms: Optional[float] = None
+    max_rss_mb: Optional[float] = None
+    max_restart_count: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.max_startup_ms is not None:
+            self.max_startup_ms = float(self.max_startup_ms)
+            if self.max_startup_ms <= 0:
+                raise ValueError("maxStartupMs must be > 0")
+        if self.max_endpoint_latency_ms is not None:
+            self.max_endpoint_latency_ms = float(self.max_endpoint_latency_ms)
+            if self.max_endpoint_latency_ms <= 0:
+                raise ValueError("maxEndpointLatencyMs must be > 0")
+        if self.max_rss_mb is not None:
+            self.max_rss_mb = float(self.max_rss_mb)
+            if self.max_rss_mb <= 0:
+                raise ValueError("maxRssMb must be > 0")
+        if self.max_restart_count is not None:
+            self.max_restart_count = int(self.max_restart_count)
+            if self.max_restart_count < 0:
+                raise ValueError("maxRestartCount must be >= 0")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SloConfig":
+        raw_startup = (
+            data.get("maxStartupMs")
+            if data.get("maxStartupMs") is not None
+            else data.get("max_startup_ms")
+        )
+        raw_latency = (
+            data.get("maxEndpointLatencyMs")
+            if data.get("maxEndpointLatencyMs") is not None
+            else data.get("max_endpoint_latency_ms")
+        )
+        raw_rss = (
+            data.get("maxRssMb")
+            if data.get("maxRssMb") is not None
+            else data.get("max_rss_mb")
+        )
+        raw_restarts = (
+            data.get("maxRestartCount")
+            if data.get("maxRestartCount") is not None
+            else data.get("max_restart_count")
+        )
+        return cls(
+            max_startup_ms=float(raw_startup) if raw_startup is not None else None,
+            max_endpoint_latency_ms=float(raw_latency) if raw_latency is not None else None,
+            max_rss_mb=float(raw_rss) if raw_rss is not None else None,
+            max_restart_count=int(raw_restarts) if raw_restarts is not None else None,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if self.max_startup_ms is not None:
+            payload["maxStartupMs"] = float(self.max_startup_ms)
+        if self.max_endpoint_latency_ms is not None:
+            payload["maxEndpointLatencyMs"] = float(self.max_endpoint_latency_ms)
+        if self.max_rss_mb is not None:
+            payload["maxRssMb"] = float(self.max_rss_mb)
+        if self.max_restart_count is not None:
+            payload["maxRestartCount"] = int(self.max_restart_count)
+        return payload
+
+
+@dataclass
+class ObservabilityConfig:
+    """DevSecOps runtime telemetry & SLO policy (`app.manifest.schema.json#/definitions/observabilityConfig`)."""
+
+    slo: Optional[SloConfig] = None
+    triage_policy: str = "SUPERVISED"
+    log_ring_lines: int = 200
+
+    def __post_init__(self) -> None:
+        if self.triage_policy not in TRIAGE_POLICIES:
+            raise ValueError(
+                f"Invalid triagePolicy {self.triage_policy!r}; expected one of {TRIAGE_POLICIES}"
+            )
+        self.log_ring_lines = max(10, min(10000, int(self.log_ring_lines)))
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ObservabilityConfig":
+        slo_raw = data.get("slo")
+        slo = SloConfig.from_dict(slo_raw) if isinstance(slo_raw, dict) else None
+        policy = str(data.get("triagePolicy") or data.get("triage_policy") or "SUPERVISED")
+        raw_ring = (
+            data.get("logRingLines")
+            if data.get("logRingLines") is not None
+            else data.get("log_ring_lines", 200)
+        )
+        return cls(
+            slo=slo,
+            triage_policy=policy,
+            log_ring_lines=max(10, min(10000, int(raw_ring))),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "triagePolicy": self.triage_policy,
+            "logRingLines": int(self.log_ring_lines),
+        }
+        if self.slo is not None:
+            payload["slo"] = self.slo.to_dict()
+        return payload
+
+
+@dataclass
 class AppManifest:
     """Canonical AuraGrid & AuraSprout application manifest (`app.manifest.json`)."""
 
@@ -301,6 +412,7 @@ class AppManifest:
     provides_contracts: List[Dict[str, str]] = field(default_factory=list)
     dependencies: List[Dict[str, str]] = field(default_factory=list)
     distribution: DistributionConfig = field(default_factory=DistributionConfig)
+    observability: Optional[ObservabilityConfig] = None
     website_url: Optional[str] = None
     repository_url: Optional[str] = None
     schema_uri: Optional[str] = None
@@ -326,6 +438,8 @@ class AppManifest:
         gui_eps = [GuiEntryPoint.from_dict(g) for g in (data.get("guiEntryPoints") or [])]
         dist_raw = data.get("distribution")
         dist = DistributionConfig.from_dict(dist_raw) if isinstance(dist_raw, dict) else DistributionConfig()
+        obs_raw = data.get("observability")
+        obs = ObservabilityConfig.from_dict(obs_raw) if isinstance(obs_raw, dict) else None
         return cls(
             app_id=app_id,
             name=display_name,
@@ -340,6 +454,7 @@ class AppManifest:
             provides_contracts=list(data.get("providesContracts") or []),
             dependencies=list(data.get("dependencies") or []),
             distribution=dist,
+            observability=obs,
             website_url=data.get("websiteUrl") or data.get("website_url"),
             repository_url=data.get("repositoryUrl") or data.get("repository_url"),
             schema_uri=data.get("$schema"),
@@ -389,6 +504,8 @@ class AppManifest:
         if self.dependencies:
             payload["dependencies"] = list(self.dependencies)
         payload["distribution"] = self.distribution.to_dict()
+        if self.observability is not None:
+            payload["observability"] = self.observability.to_dict()
         return payload
 
     def to_file(self, path: Path) -> None:

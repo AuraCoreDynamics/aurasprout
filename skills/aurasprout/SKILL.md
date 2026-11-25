@@ -49,13 +49,30 @@ aurasprout cleanup app <appId> --json
 
 | Task | Command |
 | :--- | :--- |
+| **Standalone self-install** | `aurasprout self-install --add-to-path --shortcut --json` |
+| **Standalone self-uninstall** | `aurasprout self-uninstall --yes --json` |
 | **Install from local repo or `.apkg`** | `aurasprout install <path_or_apkg> --shortcut --json` |
+| **Attach live workspace** | `aurasprout attach <workspace_dir> --json` |
 | **Install from catalog** | `aurasprout install <appId> --from-catalog <url_or_dir> --channel stable --json` |
 | **Package app into `.apkg`** | `aurasprout package <app_dir> --out ./dist --json` |
 | **List installed apps** | `aurasprout catalog list --installed --json` |
 | **Rollback app version** | `aurasprout rollback <appId> --json` |
 | **Uninstall app + mvenv** | `aurasprout uninstall <appId> --remove-mvenv --json` |
-| **Start Management Web UI** | `aurasprout ui --port 8765 --json` |
+| **Cleanup single app (`cleanup` / `app`)** | `aurasprout cleanup app <appId> --json` |
+| **Cleanup AuraSprout (`cleanup` / `self`)** | `aurasprout cleanup self --yes --json` |
+| **Start Management Web UI (`ui`)** | `aurasprout ui --port 8765 --json` |
+| **Launch Tkinter Desktop Hub (`desktop`)** | `aurasprout desktop` |
+| **Start Tier 2 IPC Bridge (`ipc`)** | `aurasprout ipc --port 0` |
+
+### CLI Subcommand Reference
+
+- `self-install`: Cleanroom standalone user-space installation of AuraSprout.
+- `self-uninstall`: Full cleanup/uninstall of AuraSprout user & OS state.
+- `app`: Target an installed application under cleanup (`aurasprout app` / `aurasprout cleanup app <appId> --json`).
+- `cleanup` (`app`, `self`): Clean up an installed `app` (`aurasprout cleanup app <appId>`) or AuraSprout `self` (`aurasprout cleanup self --yes`).
+- `ui`: Start Tier 3 loopback Management Web UI server.
+- `desktop`: Launch AuraSprout Tkinter Desktop Hub (composing AuraSeed).
+- `ipc`: Start standalone Tier 2 loopback IPC bridge server and SQLite event store (`ops.logs.error`, `ops.lifecycle.crash`, `ops.perf.anomaly`).
 
 ---
 

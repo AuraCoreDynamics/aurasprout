@@ -6,6 +6,8 @@ from aurasprout.catalog.models import (
     AppVersionEntry,
     CatalogAppEntry,
     CatalogManifest,
+    ObservabilityConfig,
+    SloConfig,
 )
 from aurasprout.catalog.packager import SproutPackager
 from aurasprout.catalog.remote_sync import (
@@ -21,8 +23,10 @@ __all__ = [
     "CatalogAppEntry",
     "CatalogManifest",
     "CatalogSourcesRegistry",
+    "ObservabilityConfig",
     "SftpCatalogDeployer",
     "SftpDeployResult",
+    "SloConfig",
     "SproutCatalogManager",
     "SproutPackager",
     "build_and_deploy_catalog",
